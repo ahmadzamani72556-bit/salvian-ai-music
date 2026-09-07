@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AudioLines, ChevronDown, Home, Library, Mic2, Music2, Plus, Settings2, Sparkles, UserRound, WandSparkles, X, Play, Trash2, ArrowLeft } from "lucide-react";
+import { createClient } from "@neondatabase/neon-js";
+import { AudioLines, ChevronDown, Home, Library, Mic2, Music2, Plus, Settings2, Sparkles, UserRound, WandSparkles, X, Play, Trash2, ArrowLeft, LogIn } from "lucide-react";
+
+const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
+const DATA = "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
+const neon = createClient({ auth: { url: AUTH }, dataApi: { url: DATA } });
 
 type Project = { id: string; title: string; lyrics: string; style: string; model: string; createdAt: string; status: string; taskId?: string | null; audio?: string | null };
 
@@ -22,12 +27,35 @@ export default function HomePage() {
   const [view, setView] = useState<"create" | "library" | "project" | "profile">("create");
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState("");
+  const [plan, setPlan] = useState("FREE");
+  const [credits, setCredits] = useState<number | null>(null);
 
   useEffect(() => {
     try { setProjects(JSON.parse(localStorage.getItem("salvian-ai-music-projects") || "[]")); } catch { setProjects([]); }
+    (async () => {
+      try {
+        const session = await neon.auth.getSession();
+        const user = session?.data?.user || session?.user;
+        if (!user) return;
+        setUserEmail(user.email || "");
+        if (typeof neon.auth.getJWTToken !== "function") return;
+        const jwt = await neon.auth.getJWTToken();
+        if (!jwt) return;
+        setToken(jwt);
+        const res = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "balance" }) });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) { setPlan(data.plan || "FREE"); setCredits(Number(data.credits || 0)); }
+      } catch (error) { console.error("SALVIAN AUTH INIT", error); }
+    })();
   }, []);
 
   const persist = (items: Project[]) => { setProjects(items); localStorage.setItem("salvian-ai-music-projects", JSON.stringify(items)); };
+
+  const login = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html"; };
+
+  const authHeaders = () => token ? { "Content-Type": "application/json", Authorization: `Bearer ${token}` } : { "Content-Type": "application/json" };
 
   const helpLyrics = async () => {
     const idea = lyrics.trim() || style.trim();
@@ -44,13 +72,16 @@ export default function HomePage() {
   };
 
   const createSong = async () => {
+    if (!token) { setNotice("Silakan login melalui Akun SALVIAN AI CREATOR terlebih dahulu."); return; }
     if (!lyrics.trim() && !style.trim()) { setNotice("Isi lirik atau gaya musik terlebih dahulu."); return; }
-    setBusy(true); setNotice("Mengirim lagu ke mesin musik…");
+    if (credits !== null && credits < 100) { setNotice(`Kredit tidak cukup. Saldo Anda ${credits.toLocaleString("id-ID")} kredit.`); return; }
+    setBusy(true); setNotice("Memeriksa kredit dan mengirim lagu ke mesin musik…");
     try {
       const title = lyrics.split("\n").find(Boolean)?.replace(/^\[.*?\]\s*/, "").slice(0, 42) || "Project Lagu Baru";
-      const res = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, lyrics: lyrics.trim(), style: style.trim(), model, n: 2 }) });
+      const res = await fetch("/api/music", { method: "POST", headers: authHeaders(), body: JSON.stringify({ title, lyrics: lyrics.trim(), style: style.trim(), model, n: 2 }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal membuat lagu");
+      if (typeof data.credits === "number") setCredits(data.credits);
       const project: Project = { id: crypto.randomUUID(), title: data.title || title, lyrics: lyrics.trim(), style: style.trim(), model, createdAt: new Date().toISOString(), status: data.status || (data.audio ? "ready" : "processing"), taskId: data.taskId || null, audio: data.audio || null };
       persist([project, ...projects]);
       setSelectedProject(project); setView("project");
@@ -63,7 +94,7 @@ export default function HomePage() {
     if (!project.taskId) return;
     setBusy(true); setNotice("Memeriksa hasil lagu…");
     try {
-      const res = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "status", taskId: project.taskId }) });
+      const res = await fetch("/api/music", { method: "POST", headers: authHeaders(), body: JSON.stringify({ action: "status", taskId: project.taskId }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal memeriksa hasil");
       const updated = { ...project, status: data.status || project.status, audio: data.audio || project.audio || null };
@@ -84,6 +115,7 @@ export default function HomePage() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><button className="card flex items-center gap-3 px-4 py-4 text-left"><Plus size={18}/><span><b className="block text-sm">Audio</b><small className="text-zinc-500">Tambah audio</small></span></button><button className="card flex items-center gap-3 px-4 py-4 text-left"><Mic2 size={18}/><span><b className="block text-sm">Voice</b><small className="text-zinc-500">Karakter suara</small></span></button><button onClick={()=>setShowModels(true)} className="card flex items-center justify-between px-4 py-4 text-left sm:col-span-2"><span><b className="block text-sm">Model</b><small className="text-zinc-500">{model} · pilihan model AI</small></span><ChevronDown size={17}/></button></div>
       {advanced && <section className="card p-4"><div className="mb-4 flex items-center justify-between"><div><h2 className="font-bold">Advanced</h2><p className="text-xs text-zinc-500">Kontrol tambahan untuk pengguna berpengalaman.</p></div><Settings2 size={18} className="text-violet-300"/></div><div className="grid gap-3 sm:grid-cols-3"><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Instrumental</div><div className="mt-1 font-semibold">Tanpa vokal</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Variasi</div><div className="mt-1 font-semibold">2 hasil</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Kreativitas</div><div className="mt-1 font-semibold">Balanced</div></div></div></section>}
       {notice && <div className="rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-100">{notice}</div>}
+      {!token && <button onClick={login} className="flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-400/25 bg-violet-500/10 px-5 py-3 text-sm font-bold text-violet-100"><LogIn size={17}/> Login Akun SALVIAN AI CREATOR</button>}
       <button onClick={createSong} disabled={busy} className="group flex w-full items-center justify-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-extrabold text-black shadow-[0_12px_45px_rgba(255,255,255,.08)] transition hover:scale-[1.01] disabled:opacity-60"><Sparkles size={18} className="transition group-hover:rotate-12"/>{busy ? "Memproses…" : "Buat Lagu"}</button>
     </div>
   </>;
@@ -92,9 +124,9 @@ export default function HomePage() {
 
   const renderProject = () => selectedProject && <section><button onClick={()=>setView("library")} className="mb-5 flex items-center gap-2 text-sm text-zinc-400"><ArrowLeft size={16}/> Kembali ke Library</button><div className="card overflow-hidden"><div className="bg-gradient-to-br from-violet-500/20 via-fuchsia-500/10 to-transparent p-6"><div className="grid h-20 w-20 place-items-center rounded-3xl bg-black/30"><Music2 size={34}/></div><p className="mt-5 text-xs uppercase tracking-[.25em] text-violet-200">SALVIAN AI MUSIC</p><h1 className="mt-2 text-2xl font-extrabold">{selectedProject.title}</h1><p className="mt-2 text-sm text-zinc-400">Model {selectedProject.model}</p></div><div className="space-y-4 p-5">{selectedProject.audio ? <><audio controls className="w-full" src={selectedProject.audio}/><a href={selectedProject.audio} target="_blank" rel="noreferrer" className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">Buka / simpan audio</a></> : <><button onClick={()=>refreshProject(selectedProject)} disabled={busy || !selectedProject.taskId} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black disabled:opacity-50"><Play size={17}/> {busy ? "Memeriksa…" : "Periksa hasil lagu"}</button><div className="rounded-2xl border border-amber-400/15 bg-amber-500/5 p-4 text-sm text-amber-100">Lagu sedang diproses oleh mesin musik. {selectedProject.taskId ? "Tekan Periksa hasil lagu untuk mengambil hasil terbaru." : "Task ID belum diterima dari provider."}</div></>}<div><h2 className="mb-2 font-bold">Status</h2><p className="text-sm text-zinc-400">{selectedProject.status}</p></div><div><h2 className="mb-2 font-bold">Gaya &amp; Vokal</h2><p className="whitespace-pre-wrap text-sm leading-7 text-zinc-400">{selectedProject.style || "Belum diisi"}</p></div><div><h2 className="mb-2 font-bold">Lirik</h2><div className="max-h-80 overflow-auto rounded-2xl border border-white/8 bg-black/20 p-4 text-sm leading-7 text-zinc-300">{selectedProject.lyrics || "Belum diisi"}</div></div><button onClick={()=>{removeProject(selectedProject.id);setSelectedProject(null);setView("library")}} className="flex items-center gap-2 text-sm text-red-300"><Trash2 size={15}/> Hapus project</button></div></div></section>;
 
-  const renderProfile = () => <section><div className="mb-6"><p className="text-xs font-semibold uppercase tracking-[.25em] text-violet-300">Creator</p><h1 className="mt-2 text-3xl font-extrabold">Profil</h1></div><div className="card p-6"><div className="grid h-16 w-16 place-items-center rounded-full bg-white text-black"><UserRound/></div><h2 className="mt-4 text-xl font-bold">Salvian</h2><p className="mt-1 text-sm text-zinc-500">Creator · SALVIAN AI MUSIC</p><div className="mt-6 grid grid-cols-2 gap-3"><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Project</div><div className="mt-1 text-xl font-bold">{projects.length}</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Status</div><div className="mt-1 text-xl font-bold">Free</div></div></div></div></section>;
+  const renderProfile = () => <section><div className="mb-6"><p className="text-xs font-semibold uppercase tracking-[.25em] text-violet-300">Creator</p><h1 className="mt-2 text-3xl font-extrabold">Profil</h1></div><div className="card p-6"><div className="grid h-16 w-16 place-items-center rounded-full bg-white text-black"><UserRound/></div><h2 className="mt-4 text-xl font-bold">{userEmail || "Salvian"}</h2><p className="mt-1 text-sm text-zinc-500">Akun terhubung ke SALVIAN AI CREATOR</p><div className="mt-6 grid grid-cols-3 gap-3"><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Project</div><div className="mt-1 text-xl font-bold">{projects.length}</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Paket</div><div className="mt-1 text-xl font-bold">{plan}</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Kredit</div><div className="mt-1 text-xl font-bold">{credits === null ? "—" : credits.toLocaleString("id-ID")}</div></div></div>{!token && <button onClick={login} className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black"><LogIn size={17}/> Login Akun</button>}</div></section>;
 
-  return <main className="min-h-screen pb-24"><header className="glass sticky top-0 z-40"><div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3"><button onClick={()=>setView("create")} className="flex items-center gap-3 text-left"><div className="grid h-10 w-10 place-items-center rounded-2xl bg-white text-black"><Music2 size={21}/></div><div><div className="text-sm font-extrabold tracking-tight">SALVIAN AI</div><div className="text-[11px] text-zinc-400">MUSIC</div></div></button><button onClick={()=>setAdvanced(!advanced)} className={`flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold transition ${advanced ? "border-violet-400/50 bg-violet-500/15 text-violet-200" : "border-white/10 bg-white/5 text-zinc-300"}`}><Settings2 size={15}/>{advanced ? "Advanced ON" : "Advanced"}</button></div></header><section className="mx-auto max-w-5xl px-4 pt-7">{view === "create" && renderCreate()}{view === "library" && renderLibrary()}{view === "project" && renderProject()}{view === "profile" && renderProfile()}</section>
+  return <main className="min-h-screen pb-24"><header className="glass sticky top-0 z-40"><div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3"><button onClick={()=>setView("create")} className="flex items-center gap-3 text-left"><div className="grid h-10 w-10 place-items-center rounded-2xl bg-white text-black"><Music2 size={21}/></div><div><div className="text-sm font-extrabold tracking-tight">SALVIAN AI</div><div className="text-[11px] text-zinc-400">MUSIC</div></div></button><div className="flex items-center gap-2"><div className="hidden rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-zinc-300 sm:block">{plan} · {credits === null ? "—" : credits.toLocaleString("id-ID")} kredit</div><button onClick={()=>setAdvanced(!advanced)} className={`flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold transition ${advanced ? "border-violet-400/50 bg-violet-500/15 text-violet-200" : "border-white/10 bg-white/5 text-zinc-300"}`}><Settings2 size={15}/>{advanced ? "Advanced ON" : "Advanced"}</button></div></div></header><section className="mx-auto max-w-5xl px-4 pt-7">{view === "create" && renderCreate()}{view === "library" && renderLibrary()}{view === "project" && renderProject()}{view === "profile" && renderProfile()}</section>
     {showModels && <div className="fixed inset-0 z-50 grid place-items-end bg-black/70 p-3 sm:place-items-center"><div className="card w-full max-w-md p-4"><div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">Pilih Model</h3><p className="text-xs text-zinc-500">Pilihan model tersimpan untuk project.</p></div><button onClick={()=>setShowModels(false)} className="rounded-full p-2 hover:bg-white/10"><X size={18}/></button></div>{['v5.5 Pro','v5 Pro','v4.5+','v4.5','v4.5-all','Lyrics Model Classic'].map(m=><button key={m} onClick={()=>{setModel(m);setShowModels(false)}} className={`flex w-full items-center justify-between rounded-xl px-3 py-3 text-left text-sm ${model===m?'bg-violet-500/15 text-violet-200':'hover:bg-white/5'}`}><span>{m}</span>{model===m&&<span className="text-[10px] font-bold">AKTIF</span>}</button>)}</div></div>}
     <nav className="glass fixed bottom-0 left-0 right-0 z-40 border-t border-white/10"><div className="mx-auto grid max-w-5xl grid-cols-4 px-2 py-2">{[[Home,'create','Buat'],[Library,'library','Library'],[Music2,'library','Proyek'],[UserRound,'profile','Profil']].map(([Icon,target,label])=><button key={label as string} onClick={()=>setView(target as "create"|"library"|"profile")} className={`flex flex-col items-center gap-1 rounded-xl py-2 text-[10px] ${view===target?'text-white':'text-zinc-500'}`}><Icon size={18}/><span>{label as string}</span></button>)}</div></nav></main>;
 }
