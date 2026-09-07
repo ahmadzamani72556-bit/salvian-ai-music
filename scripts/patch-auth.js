@@ -4,6 +4,18 @@ const path = require("path");
 const file = path.join(process.cwd(), "app", "page.tsx");
 let s = fs.readFileSync(file, "utf8");
 
+if (!s.includes("BetterAuthVanillaAdapter")) {
+  s = s.replace(
+    'import { createClient } from "@neondatabase/neon-js";',
+    'import { createClient, BetterAuthVanillaAdapter } from "@neondatabase/neon-js";'
+  );
+}
+
+s = s.replace(
+  'const neon = createClient({ auth: { url: AUTH }, dataApi: { url: DATA } });',
+  'const neon = createClient({ auth: { url: AUTH, adapter: BetterAuthVanillaAdapter() }, dataApi: { url: DATA } });'
+);
+
 if (!s.includes("const [authName, setAuthName]")) {
   s = s.replace(
     'const [authEmail, setAuthEmail] = useState("");\n  const [authPassword, setAuthPassword] = useState("");',
