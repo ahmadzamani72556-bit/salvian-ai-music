@@ -27,12 +27,16 @@ export default function HomePage() {
   const [model, setModel] = useState("v5.5 Pro");
   const [showModels, setShowModels] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [view, setView] = useState<"create" | "library" | "project" | "profile">("create");
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
   const [plan, setPlan] = useState("FREE");
   const [credits, setCredits] = useState<number | null>(null);
 
@@ -53,30 +57,51 @@ export default function HomePage() {
     }
   };
 
+  const syncSession = async () => {
+    const session = await neon.auth.getSession();
+    const user = session?.data?.user;
+    if (!user) return false;
+    setUserName((user as { name?: string }).name || "");
+    setUserEmail(user.email || "");
+    const authWithJwt = neon.auth as unknown as { getJWTToken?: () => Promise<string | null> };
+    if (typeof authWithJwt.getJWTToken !== "function") return false;
+    const jwt = await authWithJwt.getJWTToken();
+    if (!jwt) return false;
+    setToken(jwt);
+    const [balanceRes] = await Promise.all([
+      fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "balance" }) }),
+      loadLibrary(jwt, true),
+    ]);
+    const data = await balanceRes.json().catch(() => ({}));
+    if (balanceRes.ok) { setPlan(data.plan || "FREE"); setCredits(Number(data.credits || 0)); }
+    return true;
+  };
+
   useEffect(() => {
     (async () => {
-      try {
-        const session = await neon.auth.getSession();
-        const user = session?.data?.user;
-        if (!user) return;
-        setUserEmail(user.email || "");
-        const authWithJwt = neon.auth as unknown as { getJWTToken?: () => Promise<string | null> };
-        if (typeof authWithJwt.getJWTToken !== "function") return;
-        const jwt = await authWithJwt.getJWTToken();
-        if (!jwt) return;
-        setToken(jwt);
-        const [balanceRes] = await Promise.all([
-          fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "balance" }) }),
-          loadLibrary(jwt, true),
-        ]);
-        const data = await balanceRes.json().catch(() => ({}));
-        if (balanceRes.ok) { setPlan(data.plan || "FREE"); setCredits(Number(data.credits || 0)); }
-      } catch (error) { console.error("SALVIAN AUTH INIT", error); }
+      try { await syncSession(); }
+      catch (error) { console.error("SALVIAN AUTH INIT", error); }
     })();
   }, []);
 
-  const login = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html"; };
+  const login = () => { setNotice(""); setView("profile"); };
+  const openCreator = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html"; };
   const authHeaders = (): HeadersInit => token ? { "Content-Type": "application/json", Authorization: `Bearer ${token}` } : { "Content-Type": "application/json" };
+
+  const signInMusic = async () => {
+    if (!authEmail.trim() || !authPassword) { setNotice("Masukkan email dan password akun SALVIAN AI CREATOR."); return; }
+    setAuthBusy(true); setNotice("Memproses login akun SALVIAN AI…");
+    try {
+      const res = await fetch(`${AUTH}/sign-in/email`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: authEmail.trim(), password: authPassword }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || "Login gagal. Periksa email dan password.");
+      const ok = await syncSession();
+      if (!ok) throw new Error("Login berhasil, tetapi sesi belum terbaca. Silakan muat ulang halaman sekali.");
+      setAuthPassword("");
+      setNotice("Login berhasil. Akun SALVIAN AI MUSIC sekarang terhubung ke akun Creator yang sama.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Login gagal."); }
+    finally { setAuthBusy(false); }
+  };
 
   const helpLyrics = async () => {
     const idea = lyrics.trim() || style.trim();
@@ -93,7 +118,7 @@ export default function HomePage() {
   };
 
   const createSong = async () => {
-    if (!token) { setNotice("Silakan login melalui Akun SALVIAN AI CREATOR terlebih dahulu."); return; }
+    if (!token) { setNotice("Silakan login melalui Akun SALVIAN AI terlebih dahulu."); setView("profile"); return; }
     if (!lyrics.trim() && !style.trim()) { setNotice("Isi lirik atau gaya musik terlebih dahulu."); return; }
     if (credits !== null && credits < 100) { setNotice(`Kredit tidak cukup. Saldo Anda ${credits.toLocaleString("id-ID")} kredit.`); return; }
     setBusy(true); setNotice("Memeriksa kredit dan mengirim lagu ke mesin musik…");
@@ -105,10 +130,7 @@ export default function HomePage() {
       if (typeof data.credits === "number") setCredits(data.credits);
       const items = await loadLibrary(token, true);
       const project = items.find((p: Project) => (data.taskId && p.taskId === String(data.taskId)) || p.title === String(data.title || title)) || null;
-      if (project) {
-        setSelectedProject(project);
-        setView("project");
-      }
+      if (project) { setSelectedProject(project); setView("project"); }
       setNotice(data.audio ? "Lagu berhasil dibuat dan disimpan di Library akun." : "Permintaan lagu diterima dan disimpan di Library. Hasil sedang diproses.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Terjadi kesalahan saat membuat lagu."); }
     finally { setBusy(false); }
@@ -123,8 +145,7 @@ export default function HomePage() {
       if (!res.ok) throw new Error(data.error || "Gagal memeriksa hasil");
       const items = await loadLibrary(token, true);
       const updated = items.find((p: Project) => p.taskId === project.taskId) || { ...project, status: data.status || project.status, audio: data.audio || project.audio || null };
-      setSelectedProject(updated);
-      setProjects(items.length ? items : [updated]);
+      setSelectedProject(updated); setProjects(items.length ? items : [updated]);
       setNotice(updated.audio ? "Hasil lagu sudah tersedia dan Library telah diperbarui." : `Status: ${updated.status}`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Gagal memeriksa hasil."); }
     finally { setBusy(false); }
@@ -137,8 +158,7 @@ export default function HomePage() {
       const res = await fetch(`/api/projects?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: authHeaders() });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Gagal menghapus project.");
-      setProjects(prev => prev.filter(p => p.id !== id));
-      setNotice("Project dihapus dari Library akun.");
+      setProjects(prev => prev.filter(p => p.id !== id)); setNotice("Project dihapus dari Library akun.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Gagal menghapus project."); }
     finally { setBusy(false); }
   };
@@ -151,7 +171,7 @@ export default function HomePage() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><button className="card flex items-center gap-3 px-4 py-4 text-left"><Plus size={18}/><span><b className="block text-sm">Audio</b><small className="text-zinc-500">Tambah audio</small></span></button><button className="card flex items-center gap-3 px-4 py-4 text-left"><Mic2 size={18}/><span><b className="block text-sm">Voice</b><small className="text-zinc-500">Karakter suara</small></span></button><button onClick={()=>setShowModels(true)} className="card flex items-center justify-between px-4 py-4 text-left sm:col-span-2"><span><b className="block text-sm">Model</b><small className="text-zinc-500">{model} · pilihan model AI</small></span><ChevronDown size={17}/></button></div>
       {advanced && <section className="card p-4"><div className="mb-4 flex items-center justify-between"><div><h2 className="font-bold">Advanced</h2><p className="text-xs text-zinc-500">Kontrol tambahan untuk pengguna berpengalaman.</p></div><Settings2 size={18} className="text-violet-300"/></div><div className="grid gap-3 sm:grid-cols-3"><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Instrumental</div><div className="mt-1 font-semibold">Tanpa vokal</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Variasi</div><div className="mt-1 font-semibold">2 hasil</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Kreativitas</div><div className="mt-1 font-semibold">Balanced</div></div></div></section>}
       {notice && <div className="rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-100">{notice}</div>}
-      {!token && <button onClick={login} className="flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-400/25 bg-violet-500/10 px-5 py-3 text-sm font-bold text-violet-100"><LogIn size={17}/> Login Akun SALVIAN AI CREATOR</button>}
+      {!token && <button onClick={login} className="flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-400/25 bg-violet-500/10 px-5 py-3 text-sm font-bold text-violet-100"><LogIn size={17}/> Login Akun SALVIAN AI</button>}
       <button onClick={createSong} disabled={busy} className="group flex w-full items-center justify-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-extrabold text-black shadow-[0_12px_45px_rgba(255,255,255,.08)] transition hover:scale-[1.01] disabled:opacity-60"><Sparkles size={18} className="transition group-hover:rotate-12"/>{busy ? "Memproses…" : "Buat Lagu"}</button>
     </div>
   </>;
@@ -160,7 +180,7 @@ export default function HomePage() {
 
   const renderProject = () => selectedProject && <section><button onClick={()=>setView("library")} className="mb-5 flex items-center gap-2 text-sm text-zinc-400"><ArrowLeft size={16}/> Kembali ke Library</button><div className="card overflow-hidden"><div className="bg-gradient-to-br from-violet-500/20 via-fuchsia-500/10 to-transparent p-6"><div className="grid h-20 w-20 place-items-center rounded-3xl bg-black/30"><Music2 size={34}/></div><p className="mt-5 text-xs uppercase tracking-[.25em] text-violet-300">Project</p><h1 className="mt-2 text-2xl font-extrabold">{selectedProject.title}</h1><p className="mt-2 text-sm text-zinc-400">{selectedProject.style || "Gaya belum ditentukan"}</p></div><div className="space-y-4 p-6">{selectedProject.audio ? <audio controls className="w-full" src={selectedProject.audio}/> : <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4 text-sm text-amber-100">Status: {selectedProject.status}. Hasil audio belum tersedia.</div>}{selectedProject.taskId && <button onClick={()=>refreshProject(selectedProject)} disabled={busy} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold disabled:opacity-50">{busy ? "Memeriksa…" : "Periksa hasil lagi"}</button>}<div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Lirik</div><pre className="whitespace-pre-wrap font-sans text-sm leading-7 text-zinc-300">{selectedProject.lyrics}</pre></div><button onClick={async()=>{await removeProject(selectedProject.id);setSelectedProject(null);setView("library")}} disabled={busy} className="flex items-center gap-2 text-sm text-red-300 disabled:opacity-50"><Trash2 size={15}/> Hapus project</button></div></div></section>;
 
-  const renderProfile = () => <section><div className="card p-6"><div className="flex items-center gap-4"><div className="grid h-16 w-16 place-items-center rounded-full bg-violet-500/20"><UserRound size={30}/></div><div><h1 className="text-xl font-extrabold">SALVIAN AI</h1><p className="text-sm text-zinc-500">{userEmail || "Belum login"}</p></div></div><div className="mt-6 grid grid-cols-2 gap-3"><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Paket</div><div className="mt-1 font-bold">{plan}</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Kredit</div><div className="mt-1 font-bold">{credits === null ? "—" : credits.toLocaleString("id-ID")}</div></div></div></div></section>;
+  const renderProfile = () => <section><div className="card p-6"><div className="flex items-center gap-4"><div className="grid h-16 w-16 place-items-center rounded-full bg-violet-500/20"><UserRound size={30}/></div><div><h1 className="text-xl font-extrabold">{userName || "SALVIAN AI"}</h1><p className="text-sm text-zinc-500">{userEmail || "Belum login"}</p></div></div>{!token ? <div className="mt-6 space-y-3"><p className="text-sm text-zinc-400">Login di sini menggunakan akun yang sama dengan SALVIAN AI CREATOR. Sesi Music dibuat di domain ini agar akun dapat terbaca dengan benar.</p><input value={authEmail} onChange={e=>setAuthEmail(e.target.value)} type="email" placeholder="Email akun Creator" autoComplete="email" className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-600"/><input value={authPassword} onChange={e=>setAuthPassword(e.target.value)} type="password" placeholder="Password akun Creator" autoComplete="current-password" className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-600"/><button onClick={signInMusic} disabled={authBusy} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-extrabold text-black disabled:opacity-60"><LogIn size={17}/>{authBusy ? "Memproses…" : "Masuk ke SALVIAN AI MUSIC"}</button><button onClick={openCreator} className="w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-zinc-200">Buka Akun SALVIAN AI CREATOR</button></div> : <><div className="mt-6 grid grid-cols-2 gap-3"><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Paket</div><div className="mt-1 font-bold">{plan}</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Kredit</div><div className="mt-1 font-bold">{credits === null ? "—" : credits.toLocaleString("id-ID")}</div></div></div><button onClick={openCreator} className="mt-4 w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-zinc-200">Kelola akun &amp; kredit di Creator</button></>}</div>{notice && <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-100">{notice}</div>}</section>;
 
-  return <main className="min-h-screen pb-28"><header className="sticky top-0 z-20 border-b border-white/8 bg-[#08080b]/85 backdrop-blur-xl"><div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6"><div><div className="text-lg font-black tracking-tight">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[10px] uppercase tracking-[.25em] text-zinc-500">Music</div></div><div className="flex items-center gap-3"><div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold">{credits === null ? "—" : `${credits.toLocaleString("id-ID")} kredit`}</div><button onClick={()=>setAdvanced(v=>!v)} className={`rounded-full border px-3 py-1.5 text-xs font-bold ${advanced ? "border-violet-400/40 bg-violet-500/15 text-violet-200" : "border-white/10 bg-white/5 text-zinc-300"}`}>Advanced</button></div></div></header><div className="mx-auto max-w-6xl px-4 pt-7 sm:px-6">{view === "create" && renderCreate()}{view === "library" && renderLibrary()}{view === "project" && renderProject()}{view === "profile" && renderProfile()}</div>{showModels && <div className="fixed inset-0 z-40 grid place-items-end bg-black/70 p-3 sm:place-items-center"><div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#111116] p-5 shadow-2xl"><div className="mb-4 flex items-center justify-between"><h2 className="font-extrabold">Pilih model</h2><button onClick={()=>setShowModels(false)}><X size={19}/></button></div>{["v5.5 Pro","v5 Pro","v4.5+","v4.5","v4.5-all","Lyrics Model Classic"].map(item=><button key={item} onClick={()=>{setModel(item);setShowModels(false)}} className={`mb-2 flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left ${model===item?"border-violet-400/40 bg-violet-500/10":"border-white/8 bg-white/5"}`}><span className="font-semibold">{item}</span>{model===item&&<span className="text-xs text-violet-300">Dipilih</span>}</button>)}</div></div>}<nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-white/8 bg-[#09090c]/90 backdrop-blur-xl"><div className="mx-auto grid max-w-xl grid-cols-4 px-2 py-2"><button onClick={()=>setView("create")} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="create"?"text-violet-200":"text-zinc-500"}`}><Home size={18}/><span>Buat</span></button><button onClick={async()=>{setView("library");if(token) await loadLibrary(token,true)}} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="library"||view==="project"?"text-violet-200":"text-zinc-500"}`}><Library size={18}/><span>Library</span></button><button onClick={()=>setView("profile")} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="profile"?"text-violet-200":"text-zinc-500"}`}><UserRound size={18}/><span>Akun</span></button><button onClick={login} className="flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] text-zinc-500"><LogIn size={18}/><span>Creator</span></button></div></nav></main>;
+  return <main className="min-h-screen pb-28"><header className="sticky top-0 z-20 border-b border-white/8 bg-[#08080b]/85 backdrop-blur-xl"><div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6"><div><div className="text-lg font-black tracking-tight">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[10px] uppercase tracking-[.25em] text-zinc-500">Music</div></div><div className="flex items-center gap-3"><div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold">{credits === null ? "—" : `${credits.toLocaleString("id-ID")} kredit`}</div><button onClick={()=>setAdvanced(v=>!v)} className={`rounded-full border px-3 py-1.5 text-xs font-bold ${advanced ? "border-violet-400/40 bg-violet-500/15 text-violet-200" : "border-white/10 bg-white/5 text-zinc-300"}`}>Advanced</button></div></div></header><div className="mx-auto max-w-6xl px-4 pt-7 sm:px-6">{view === "create" && renderCreate()}{view === "library" && renderLibrary()}{view === "project" && renderProject()}{view === "profile" && renderProfile()}</div>{showModels && <div className="fixed inset-0 z-40 grid place-items-end bg-black/70 p-3 sm:place-items-center"><div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#111116] p-5 shadow-2xl"><div className="mb-4 flex items-center justify-between"><h2 className="font-extrabold">Pilih model</h2><button onClick={()=>setShowModels(false)}><X size={19}/></button></div>{["v5.5 Pro","v5 Pro","v4.5+","v4.5","v4.5-all","Lyrics Model Classic"].map(item=><button key={item} onClick={()=>{setModel(item);setShowModels(false)}} className={`mb-2 flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left ${model===item?"border-violet-400/40 bg-violet-500/10":"border-white/8 bg-white/5"}`}><span className="font-semibold">{item}</span>{model===item&&<span className="text-xs text-violet-300">Dipilih</span>}</button>)}</div></div>}<nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-white/8 bg-[#09090c]/90 backdrop-blur-xl"><div className="mx-auto grid max-w-xl grid-cols-4 px-2 py-2"><button onClick={()=>setView("create")} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="create"?"text-violet-200":"text-zinc-500"}`}><Home size={18}/><span>Buat</span></button><button onClick={async()=>{setView("library");if(token) await loadLibrary(token,true)}} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="library"||view==="project"?"text-violet-200":"text-zinc-500"}`}><Library size={18}/><span>Library</span></button><button onClick={()=>setView("profile")} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="profile"?"text-violet-200":"text-zinc-500"}`}><UserRound size={18}/><span>Akun</span></button><button onClick={openCreator} className="flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] text-zinc-500"><LogIn size={18}/><span>Creator</span></button></div></nav></main>;
 }
