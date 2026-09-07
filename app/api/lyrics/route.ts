@@ -1,38 +1,40 @@
+import OpenAI from "openai";
 import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
   try {
     const { idea } = await request.json();
-    if (!idea || typeof idea !== "string") {
+    if (!idea || typeof idea !== "string" || !idea.trim()) {
       return NextResponse.json({ error: "Masukkan ide atau tema lagu." }, { status: 400 });
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({
-        lyrics: `[Verse 1]\n${idea}\nKembangkan cerita ini menjadi lirik yang indah dan mudah dinyanyikan.\n\n[Chorus]\nTuliskan bagian reff yang kuat dan mudah diingat.`,
-        demo: true,
-      });
+      return NextResponse.json(
+        { error: "OPENAI_API_KEY belum tersedia di server. Fitur Bantu AI belum bisa digunakan." },
+        { status: 503 },
+      );
     }
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: process.env.OPENAI_LYRICS_MODEL || "gpt-5-mini",
-        input: `Anda adalah penulis lirik profesional berbahasa Indonesia. Buat lirik lagu orisinal berdasarkan ide berikut. Gunakan struktur [Verse 1], [Pre-Chorus] bila cocok, [Chorus], [Verse 2], dan [Bridge] bila diperlukan. Jangan jelaskan prosesnya, keluarkan hanya lirik. Ide: ${idea}`,
-      }),
+    const client = new OpenAI({ apiKey });
+    const response = await client.responses.create({
+      model: process.env.OPENAI_LYRICS_MODEL || "gpt-5-mini",
+      instructions:
+        "Anda adalah penulis lirik profesional untuk SALVIAN AI MUSIC. Buat lirik lagu original berdasarkan tema, cerita, dan arahan pengguna. Jangan meniru lirik lagu yang sudah ada atau gaya khas artis tertentu. Gunakan struktur [Verse 1], [Pre-Chorus], [Chorus], [Verse 2], [Bridge], [Chorus] jika sesuai. Keluarkan hanya lirik tanpa penjelasan.",
+      input: `Buat lirik lagu original berdasarkan ide berikut:\n\n${idea.trim()}`,
     });
 
-    if (!response.ok) {
-      const detail = await response.text();
-      return NextResponse.json({ error: "Layanan AI belum dapat digunakan.", detail }, { status: 502 });
+    const lyrics = response.output_text?.trim();
+    if (!lyrics) {
+      return NextResponse.json({ error: "AI tidak menghasilkan lirik." }, { status: 502 });
     }
 
-    const data = await response.json();
-    const text = data.output_text || data.output?.flatMap((item: { content?: { text?: string }[] }) => item.content || []).map((part: { text?: string }) => part.text || "").join("\n") || "";
-    return NextResponse.json({ lyrics: text });
-  } catch {
-    return NextResponse.json({ error: "Terjadi kesalahan saat membuat lirik." }, { status: 500 });
+    return NextResponse.json({ lyrics });
+  } catch (error) {
+    console.error("SALVIAN AI MUSIC lyrics error", error);
+    return NextResponse.json({ error: "Terjadi kesalahan saat membuat lirik AI." }, { status: 500 });
   }
 }
