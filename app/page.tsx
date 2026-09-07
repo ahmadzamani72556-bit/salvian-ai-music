@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { AudioLines, ChevronDown, Home, Library, Mic2, Music2, Plus, Settings2, Sparkles, UserRound, WandSparkles, X, Play, Trash2, ArrowLeft } from "lucide-react";
 
-type Project = { id: string; title: string; lyrics: string; style: string; model: string; createdAt: string; status: "ready" };
+type Project = { id: string; title: string; lyrics: string; style: string; model: string; createdAt: string; status: string; taskId?: string | null; audio?: string | null };
 
 const examples = [
   "Slow Rock Melayu, sedih dan menyentuh hati, vokal pria dewasa, suara lembut dan emosional, gitar elektrik clean, piano, bass lembut, drum pelan, suasana malam, 70 BPM.",
@@ -38,21 +38,40 @@ export default function HomePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal membuat lirik");
       setLyrics(data.lyrics || "");
-      setNotice(data.demo ? "Mode demo aktif. Hubungkan OPENAI_API_KEY untuk lirik AI sungguhan." : "Lirik berhasil dibuat oleh AI. Silakan edit sesuai selera.");
+      setNotice("Lirik berhasil dibuat oleh AI. Silakan edit sesuai selera.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Terjadi kesalahan."); }
     finally { setBusy(false); }
   };
 
-  const createSong = () => {
+  const createSong = async () => {
     if (!lyrics.trim() && !style.trim()) { setNotice("Isi lirik atau gaya musik terlebih dahulu."); return; }
-    setBusy(true); setNotice("Menyiapkan project lagu…");
-    setTimeout(() => {
+    setBusy(true); setNotice("Mengirim lagu ke mesin musik…");
+    try {
       const title = lyrics.split("\n").find(Boolean)?.replace(/^\[.*?\]\s*/, "").slice(0, 42) || "Project Lagu Baru";
-      const project: Project = { id: crypto.randomUUID(), title, lyrics: lyrics.trim(), style: style.trim(), model, createdAt: new Date().toISOString(), status: "ready" };
+      const res = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, lyrics: lyrics.trim(), style: style.trim(), model, n: 2 }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal membuat lagu");
+      const project: Project = { id: crypto.randomUUID(), title: data.title || title, lyrics: lyrics.trim(), style: style.trim(), model, createdAt: new Date().toISOString(), status: data.status || (data.audio ? "ready" : "processing"), taskId: data.taskId || null, audio: data.audio || null };
       persist([project, ...projects]);
-      setSelectedProject(project); setView("project"); setBusy(false);
-      setNotice("Project lagu berhasil dibuat dan disimpan di Library.");
-    }, 700);
+      setSelectedProject(project); setView("project");
+      setNotice(data.audio ? "Lagu berhasil dibuat." : "Permintaan lagu diterima. Hasil sedang diproses.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Terjadi kesalahan saat membuat lagu."); }
+    finally { setBusy(false); }
+  };
+
+  const refreshProject = async (project: Project) => {
+    if (!project.taskId) return;
+    setBusy(true); setNotice("Memeriksa hasil lagu…");
+    try {
+      const res = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "status", taskId: project.taskId }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal memeriksa hasil");
+      const updated = { ...project, status: data.status || project.status, audio: data.audio || project.audio || null };
+      persist(projects.map(p => p.id === project.id ? updated : p));
+      setSelectedProject(updated);
+      setNotice(updated.audio ? "Hasil lagu sudah tersedia." : `Status: ${updated.status}`);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Gagal memeriksa hasil."); }
+    finally { setBusy(false); }
   };
 
   const removeProject = (id: string) => persist(projects.filter(p => p.id !== id));
@@ -69,9 +88,9 @@ export default function HomePage() {
     </div>
   </>;
 
-  const renderLibrary = () => <section><div className="mb-6"><p className="text-xs font-semibold uppercase tracking-[.25em] text-violet-300">Your music</p><h1 className="mt-2 text-3xl font-extrabold">Library</h1><p className="mt-2 text-sm text-zinc-500">Semua project lagu yang Anda buat tersimpan di perangkat ini.</p></div>{projects.length === 0 ? <div className="card p-8 text-center"><Music2 className="mx-auto mb-3 text-zinc-600"/><p className="font-semibold">Belum ada project</p><p className="mt-1 text-sm text-zinc-500">Buat lagu pertama Anda dari menu Buat.</p></div> : <div className="space-y-3">{projects.map(p=><button key={p.id} onClick={()=>{setSelectedProject(p);setView("project")}} className="card flex w-full items-center gap-4 p-4 text-left"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Music2 size={20}/></div><div className="min-w-0 flex-1"><div className="truncate font-bold">{p.title}</div><div className="mt-1 truncate text-xs text-zinc-500">{p.style || "Gaya belum ditentukan"}</div></div><span className="text-xs text-emerald-300">Siap</span></button>)}</div>}</section>;
+  const renderLibrary = () => <section><div className="mb-6"><p className="text-xs font-semibold uppercase tracking-[.25em] text-violet-300">Your music</p><h1 className="mt-2 text-3xl font-extrabold">Library</h1><p className="mt-2 text-sm text-zinc-500">Semua project lagu yang Anda buat tersimpan di perangkat ini.</p></div>{projects.length === 0 ? <div className="card p-8 text-center"><Music2 className="mx-auto mb-3 text-zinc-600"/><p className="font-semibold">Belum ada project</p><p className="mt-1 text-sm text-zinc-500">Buat lagu pertama Anda dari menu Buat.</p></div> : <div className="space-y-3">{projects.map(p=><button key={p.id} onClick={()=>{setSelectedProject(p);setView("project")}} className="card flex w-full items-center gap-4 p-4 text-left"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Music2 size={20}/></div><div className="min-w-0 flex-1"><div className="truncate font-bold">{p.title}</div><div className="mt-1 truncate text-xs text-zinc-500">{p.style || "Gaya belum ditentukan"}</div></div><span className={`text-xs ${p.audio ? "text-emerald-300" : "text-amber-300"}`}>{p.audio ? "Siap" : p.status}</span></button>)}</div>}</section>;
 
-  const renderProject = () => selectedProject && <section><button onClick={()=>setView("library")} className="mb-5 flex items-center gap-2 text-sm text-zinc-400"><ArrowLeft size={16}/> Kembali ke Library</button><div className="card overflow-hidden"><div className="bg-gradient-to-br from-violet-500/20 via-fuchsia-500/10 to-transparent p-6"><div className="grid h-20 w-20 place-items-center rounded-3xl bg-black/30"><Music2 size={34}/></div><p className="mt-5 text-xs uppercase tracking-[.25em] text-violet-200">SALVIAN AI MUSIC</p><h1 className="mt-2 text-2xl font-extrabold">{selectedProject.title}</h1><p className="mt-2 text-sm text-zinc-400">Model {selectedProject.model}</p></div><div className="space-y-4 p-5"><button disabled className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black disabled:opacity-50"><Play size={17}/> Putar hasil lagu</button><div className="rounded-2xl border border-amber-400/15 bg-amber-500/5 p-4 text-sm text-amber-100">Project dan input sudah tersimpan. <b>Mesin audio belum terhubung</b>, jadi tombol Putar akan aktif setelah engine generasi musik dipasang.</div><div><h2 className="mb-2 font-bold">Gaya &amp; Vokal</h2><p className="whitespace-pre-wrap text-sm leading-7 text-zinc-400">{selectedProject.style || "Belum diisi"}</p></div><div><h2 className="mb-2 font-bold">Lirik</h2><div className="max-h-80 overflow-auto rounded-2xl border border-white/8 bg-black/20 p-4 text-sm leading-7 text-zinc-300">{selectedProject.lyrics || "Belum diisi"}</div></div><button onClick={()=>{removeProject(selectedProject.id);setSelectedProject(null);setView("library")}} className="flex items-center gap-2 text-sm text-red-300"><Trash2 size={15}/> Hapus project</button></div></div></section>;
+  const renderProject = () => selectedProject && <section><button onClick={()=>setView("library")} className="mb-5 flex items-center gap-2 text-sm text-zinc-400"><ArrowLeft size={16}/> Kembali ke Library</button><div className="card overflow-hidden"><div className="bg-gradient-to-br from-violet-500/20 via-fuchsia-500/10 to-transparent p-6"><div className="grid h-20 w-20 place-items-center rounded-3xl bg-black/30"><Music2 size={34}/></div><p className="mt-5 text-xs uppercase tracking-[.25em] text-violet-200">SALVIAN AI MUSIC</p><h1 className="mt-2 text-2xl font-extrabold">{selectedProject.title}</h1><p className="mt-2 text-sm text-zinc-400">Model {selectedProject.model}</p></div><div className="space-y-4 p-5">{selectedProject.audio ? <><audio controls className="w-full" src={selectedProject.audio}/><a href={selectedProject.audio} target="_blank" rel="noreferrer" className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black">Buka / simpan audio</a></> : <><button onClick={()=>refreshProject(selectedProject)} disabled={busy || !selectedProject.taskId} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-black disabled:opacity-50"><Play size={17}/> {busy ? "Memeriksa…" : "Periksa hasil lagu"}</button><div className="rounded-2xl border border-amber-400/15 bg-amber-500/5 p-4 text-sm text-amber-100">Lagu sedang diproses oleh mesin musik. {selectedProject.taskId ? "Tekan Periksa hasil lagu untuk mengambil hasil terbaru." : "Task ID belum diterima dari provider."}</div></>}<div><h2 className="mb-2 font-bold">Status</h2><p className="text-sm text-zinc-400">{selectedProject.status}</p></div><div><h2 className="mb-2 font-bold">Gaya &amp; Vokal</h2><p className="whitespace-pre-wrap text-sm leading-7 text-zinc-400">{selectedProject.style || "Belum diisi"}</p></div><div><h2 className="mb-2 font-bold">Lirik</h2><div className="max-h-80 overflow-auto rounded-2xl border border-white/8 bg-black/20 p-4 text-sm leading-7 text-zinc-300">{selectedProject.lyrics || "Belum diisi"}</div></div><button onClick={()=>{removeProject(selectedProject.id);setSelectedProject(null);setView("library")}} className="flex items-center gap-2 text-sm text-red-300"><Trash2 size={15}/> Hapus project</button></div></div></section>;
 
   const renderProfile = () => <section><div className="mb-6"><p className="text-xs font-semibold uppercase tracking-[.25em] text-violet-300">Creator</p><h1 className="mt-2 text-3xl font-extrabold">Profil</h1></div><div className="card p-6"><div className="grid h-16 w-16 place-items-center rounded-full bg-white text-black"><UserRound/></div><h2 className="mt-4 text-xl font-bold">Salvian</h2><p className="mt-1 text-sm text-zinc-500">Creator · SALVIAN AI MUSIC</p><div className="mt-6 grid grid-cols-2 gap-3"><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Project</div><div className="mt-1 text-xl font-bold">{projects.length}</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Status</div><div className="mt-1 text-xl font-bold">Free</div></div></div></div></section>;
 
