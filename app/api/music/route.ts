@@ -6,6 +6,7 @@ export const maxDuration = 300;
 const BASE_URL = process.env.MUREKA_BASE_URL || "https://api.mureka.ai";
 const API_KEY = process.env.MUREKA_API_KEY || process.env.MUSIC_API_KEY;
 const CREDIT_API = process.env.SALVIAN_CREDIT_API_URL || "https://salvian-ai-creator.vercel.app/api/music-credit";
+const DATA_API = process.env.NEON_DATA_API_URL || "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
 const MUSIC_CREDIT_COST = Math.max(1, Number(process.env.SALVIAN_MUSIC_CREDIT_COST || 100));
 
 function cleanUrl(value: unknown) { if (typeof value !== "string") return null; const s = value.trim(); return /^https?:\/\//i.test(s) ? s : null; }
@@ -32,6 +33,9 @@ async function creditRequest(auth: string, action: "balance" | "consume" | "refu
   const data = await response.json().catch(() => ({}));
   return { response, data };
 }
+async function libraryRequest(auth: string, method: "POST" | "PATCH", body: Record<string, unknown>, query = "") {
+  return fetch(`${DATA_API}/salvian_music_projects${query}`, { method, headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" }, body: JSON.stringify(body), cache: "no-store" });
+}
 
 export async function POST(request: NextRequest) {
   if (!API_KEY) return NextResponse.json({ success: false, error: "MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di deployment." }, { status: 503 });
@@ -54,7 +58,11 @@ export async function POST(request: NextRequest) {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) return NextResponse.json({ success: false, taskId, error: `Mureka Query ${response.status}`, data }, { status: response.status });
       const audio = findAudio(data);
-      return NextResponse.json({ success: true, taskId: String(taskId), status: findStatus(data), audio, url: audio, data });
+      const status = findStatus(data);
+      try {
+        await libraryRequest(auth, "PATCH", { status, audio_url: audio, updated_at: new Date().toISOString(), provider_data: data }, `?task_id=eq.${encodeURIComponent(String(taskId))}`);
+      } catch (libraryError) { console.error("MUSIC LIBRARY STATUS ERROR", libraryError); }
+      return NextResponse.json({ success: true, taskId: String(taskId), status, audio, url: audio, data });
     }
 
     const lyrics = String(body?.lyrics || "").trim();
@@ -78,7 +86,24 @@ export async function POST(request: NextRequest) {
       providerSucceeded = true;
       const taskId = findTaskId(data);
       const audio = findAudio(data);
-      return NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status: findStatus(data), audio, url: audio, credits: Number(credit.data?.credits || 0), data });
+      const status = findStatus(data);
+      let librarySaved = false;
+      try {
+        const libraryResponse = await libraryRequest(auth, "POST", {
+          title: String(body?.title || "Salvian AI Song").slice(0, 160),
+          lyrics,
+          style,
+          model: String(body?.model || "auto").slice(0, 80),
+          task_id: taskId,
+          status,
+          audio_url: audio,
+          provider_data: data,
+          updated_at: new Date().toISOString()
+        });
+        librarySaved = libraryResponse.ok;
+        if (!libraryResponse.ok) console.error("MUSIC LIBRARY SAVE", await libraryResponse.text().catch(() => ""));
+      } catch (libraryError) { console.error("MUSIC LIBRARY SAVE ERROR", libraryError); }
+      return NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, url: audio, credits: Number(credit.data?.credits || 0), librarySaved, data });
     } finally {
       if (!providerSucceeded) { try { await creditRequest(auth, "refund"); } catch (refundError) { console.error("MUSIC CREDIT REFUND ERROR", refundError); } }
     }
