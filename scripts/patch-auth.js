@@ -16,6 +16,9 @@ s = s.replace(
   'const neon = createClient({ auth: { url: AUTH, adapter: BetterAuthVanillaAdapter() }, dataApi: { url: DATA } });'
 );
 
+// Neon Auth exposes getJwtToken() (lowercase wt), not getJWTToken().
+s = s.replace(/getJWTToken/g, "getJwtToken");
+
 if (!s.includes("const [authName, setAuthName]")) {
   s = s.replace(
     'const [authEmail, setAuthEmail] = useState("");\n  const [authPassword, setAuthPassword] = useState("");',
