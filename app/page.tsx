@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@neondatabase/neon-js";
-import { AudioLines, ChevronDown, Home, Library, Mic2, Music2, Plus, Settings2, Sparkles, UserRound, WandSparkles, X, Play, Trash2, ArrowLeft, LogIn } from "lucide-react";
+import { AudioLines, ChevronDown, Home, Library, Mic2, Music2, Plus, Settings2, Sparkles, UserRound, WandSparkles, X, Trash2, ArrowLeft, LogIn } from "lucide-react";
 
 const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
 const DATA = "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
@@ -15,6 +15,10 @@ const examples = [
   "Dangdut Timur NTT, vokal wanita dewasa, ceria dan manja, kendang dangdut kuat, gitar elektrik, bass, keyboard, suasana pesta, tempo 110 BPM.",
   "Duet pria dan wanita, saling bersahutan, romantis dan sedih, Slow Rock Melayu, gitar akustik, piano, string lembut, chorus besar.",
 ];
+
+function mapProject(row: Record<string, unknown>): Project {
+  return { id: String(row.id), title: String(row.title || "Project Lagu Baru"), lyrics: String(row.lyrics || ""), style: String(row.style || ""), model: String(row.model || "v5.5 Pro"), createdAt: String(row.created_at || row.createdAt || new Date().toISOString()), status: String(row.status || "processing"), taskId: row.task_id ? String(row.task_id) : null, audio: row.audio_url ? String(row.audio_url) : null };
+}
 
 export default function HomePage() {
   const [advanced, setAdvanced] = useState(false);
@@ -32,8 +36,24 @@ export default function HomePage() {
   const [plan, setPlan] = useState("FREE");
   const [credits, setCredits] = useState<number | null>(null);
 
+  const loadLibrary = async (jwt: string, silent = false) => {
+    if (!silent) setBusy(true);
+    try {
+      const res = await fetch("/api/projects", { headers: { Authorization: `Bearer ${jwt}` }, cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Gagal memuat Library.");
+      const items = Array.isArray(data.projects) ? data.projects.map(mapProject) : [];
+      setProjects(items);
+      return items;
+    } catch (error) {
+      if (!silent) setNotice(error instanceof Error ? error.message : "Gagal memuat Library.");
+      return [];
+    } finally {
+      if (!silent) setBusy(false);
+    }
+  };
+
   useEffect(() => {
-    try { setProjects(JSON.parse(localStorage.getItem("salvian-ai-music-projects") || "[]")); } catch { setProjects([]); }
     (async () => {
       try {
         const session = await neon.auth.getSession();
@@ -45,14 +65,16 @@ export default function HomePage() {
         const jwt = await authWithJwt.getJWTToken();
         if (!jwt) return;
         setToken(jwt);
-        const res = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "balance" }) });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok) { setPlan(data.plan || "FREE"); setCredits(Number(data.credits || 0)); }
+        const [balanceRes] = await Promise.all([
+          fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "balance" }) }),
+          loadLibrary(jwt, true),
+        ]);
+        const data = await balanceRes.json().catch(() => ({}));
+        if (balanceRes.ok) { setPlan(data.plan || "FREE"); setCredits(Number(data.credits || 0)); }
       } catch (error) { console.error("SALVIAN AUTH INIT", error); }
     })();
   }, []);
 
-  const persist = (items: Project[]) => { setProjects(items); localStorage.setItem("salvian-ai-music-projects", JSON.stringify(items)); };
   const login = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html"; };
   const authHeaders = (): HeadersInit => token ? { "Content-Type": "application/json", Authorization: `Bearer ${token}` } : { "Content-Type": "application/json" };
 
@@ -81,30 +103,45 @@ export default function HomePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal membuat lagu");
       if (typeof data.credits === "number") setCredits(data.credits);
-      const project: Project = { id: crypto.randomUUID(), title: data.title || title, lyrics: lyrics.trim(), style: style.trim(), model, createdAt: new Date().toISOString(), status: data.status || (data.audio ? "ready" : "processing"), taskId: data.taskId || null, audio: data.audio || null };
-      persist([project, ...projects]);
-      setSelectedProject(project); setView("project");
-      setNotice(data.audio ? "Lagu berhasil dibuat." : "Permintaan lagu diterima. Hasil sedang diproses.");
+      const items = await loadLibrary(token, true);
+      const project = items.find((p: Project) => (data.taskId && p.taskId === String(data.taskId)) || p.title === String(data.title || title)) || null;
+      if (project) {
+        setSelectedProject(project);
+        setView("project");
+      }
+      setNotice(data.audio ? "Lagu berhasil dibuat dan disimpan di Library akun." : "Permintaan lagu diterima dan disimpan di Library. Hasil sedang diproses.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Terjadi kesalahan saat membuat lagu."); }
     finally { setBusy(false); }
   };
 
   const refreshProject = async (project: Project) => {
-    if (!project.taskId) return;
+    if (!project.taskId || !token) return;
     setBusy(true); setNotice("Memeriksa hasil lagu…");
     try {
       const res = await fetch("/api/music", { method: "POST", headers: authHeaders(), body: JSON.stringify({ action: "status", taskId: project.taskId }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal memeriksa hasil");
-      const updated = { ...project, status: data.status || project.status, audio: data.audio || project.audio || null };
-      persist(projects.map(p => p.id === project.id ? updated : p));
+      const items = await loadLibrary(token, true);
+      const updated = items.find((p: Project) => p.taskId === project.taskId) || { ...project, status: data.status || project.status, audio: data.audio || project.audio || null };
       setSelectedProject(updated);
-      setNotice(updated.audio ? "Hasil lagu sudah tersedia." : `Status: ${updated.status}`);
+      setProjects(items.length ? items : [updated]);
+      setNotice(updated.audio ? "Hasil lagu sudah tersedia dan Library telah diperbarui." : `Status: ${updated.status}`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Gagal memeriksa hasil."); }
     finally { setBusy(false); }
   };
 
-  const removeProject = (id: string) => persist(projects.filter(p => p.id !== id));
+  const removeProject = async (id: string) => {
+    if (!token) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/projects?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Gagal menghapus project.");
+      setProjects(prev => prev.filter(p => p.id !== id));
+      setNotice("Project dihapus dari Library akun.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Gagal menghapus project."); }
+    finally { setBusy(false); }
+  };
 
   const renderCreate = () => <>
     <div className="mb-7"><p className="mb-2 text-xs font-semibold uppercase tracking-[.25em] text-violet-300">Create your sound</p><h1 className="text-3xl font-extrabold tracking-tight sm:text-5xl">Ubah ide menjadi <span className="gradient-text">lagu.</span></h1><p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">Tulis lirik, jelaskan gaya dan karakter vokal. Sisanya kami siapkan dalam satu alur yang sederhana.</p></div>
@@ -119,11 +156,11 @@ export default function HomePage() {
     </div>
   </>;
 
-  const renderLibrary = () => <section><div className="mb-6"><p className="text-xs font-semibold uppercase tracking-[.25em] text-violet-300">Your music</p><h1 className="mt-2 text-3xl font-extrabold">Library</h1><p className="mt-2 text-sm text-zinc-500">Semua project lagu yang Anda buat tersimpan di perangkat ini.</p></div>{projects.length === 0 ? <div className="card p-8 text-center"><Music2 className="mx-auto mb-3 text-zinc-600"/><p className="font-semibold">Belum ada project</p><p className="mt-1 text-sm text-zinc-500">Buat lagu pertama Anda dari menu Buat.</p></div> : <div className="space-y-3">{projects.map(p=><button key={p.id} onClick={()=>{setSelectedProject(p);setView("project")}} className="card flex w-full items-center gap-4 p-4 text-left"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Music2 size={20}/></div><div className="min-w-0 flex-1"><div className="truncate font-bold">{p.title}</div><div className="mt-1 truncate text-xs text-zinc-500">{p.style || "Gaya belum ditentukan"}</div></div><span className={`text-xs ${p.audio ? "text-emerald-300" : "text-amber-300"}`}>{p.audio ? "Siap" : p.status}</span></button>)}</div>}</section>;
+  const renderLibrary = () => <section><div className="mb-6"><p className="text-xs font-semibold uppercase tracking-[.25em] text-violet-300">Your music</p><h1 className="mt-2 text-3xl font-extrabold">Library</h1><p className="mt-2 text-sm text-zinc-500">Semua project lagu Anda tersimpan di Library akun dan dapat dibuka kembali di perangkat lain.</p></div>{projects.length === 0 ? <div className="card p-8 text-center"><Music2 className="mx-auto mb-3 text-zinc-600"/><p className="font-semibold">Belum ada project</p><p className="mt-1 text-sm text-zinc-500">Buat lagu pertama Anda dari menu Buat.</p></div> : <div className="space-y-3">{projects.map(p=><button key={p.id} onClick={()=>{setSelectedProject(p);setView("project")}} className="card flex w-full items-center gap-4 p-4 text-left"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Music2 size={20}/></div><div className="min-w-0 flex-1"><div className="truncate font-bold">{p.title}</div><div className="mt-1 truncate text-xs text-zinc-500">{p.style || "Gaya belum ditentukan"}</div></div><span className={`text-xs ${p.audio ? "text-emerald-300" : "text-amber-300"}`}>{p.audio ? "Siap" : p.status}</span></button>)}</div>}</section>;
 
-  const renderProject = () => selectedProject && <section><button onClick={()=>setView("library")} className="mb-5 flex items-center gap-2 text-sm text-zinc-400"><ArrowLeft size={16}/> Kembali ke Library</button><div className="card overflow-hidden"><div className="bg-gradient-to-br from-violet-500/20 via-fuchsia-500/10 to-transparent p-6"><div className="grid h-20 w-20 place-items-center rounded-3xl bg-black/30"><Music2 size={34}/></div><p className="mt-5 text-xs uppercase tracking-[.25em] text-violet-300">Project</p><h1 className="mt-2 text-2xl font-extrabold">{selectedProject.title}</h1><p className="mt-2 text-sm text-zinc-400">{selectedProject.style || "Gaya belum ditentukan"}</p></div><div className="space-y-4 p-6">{selectedProject.audio ? <audio controls className="w-full" src={selectedProject.audio}/> : <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4 text-sm text-amber-100">Status: {selectedProject.status}. Hasil audio belum tersedia.</div>}{selectedProject.taskId && <button onClick={()=>refreshProject(selectedProject)} disabled={busy} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold disabled:opacity-50">{busy ? "Memeriksa…" : "Periksa hasil lagi"}</button>}<div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Lirik</div><pre className="whitespace-pre-wrap font-sans text-sm leading-7 text-zinc-300">{selectedProject.lyrics}</pre></div><button onClick={()=>{removeProject(selectedProject.id);setSelectedProject(null);setView("library")}} className="flex items-center gap-2 text-sm text-red-300"><Trash2 size={15}/> Hapus project</button></div></div></section>;
+  const renderProject = () => selectedProject && <section><button onClick={()=>setView("library")} className="mb-5 flex items-center gap-2 text-sm text-zinc-400"><ArrowLeft size={16}/> Kembali ke Library</button><div className="card overflow-hidden"><div className="bg-gradient-to-br from-violet-500/20 via-fuchsia-500/10 to-transparent p-6"><div className="grid h-20 w-20 place-items-center rounded-3xl bg-black/30"><Music2 size={34}/></div><p className="mt-5 text-xs uppercase tracking-[.25em] text-violet-300">Project</p><h1 className="mt-2 text-2xl font-extrabold">{selectedProject.title}</h1><p className="mt-2 text-sm text-zinc-400">{selectedProject.style || "Gaya belum ditentukan"}</p></div><div className="space-y-4 p-6">{selectedProject.audio ? <audio controls className="w-full" src={selectedProject.audio}/> : <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4 text-sm text-amber-100">Status: {selectedProject.status}. Hasil audio belum tersedia.</div>}{selectedProject.taskId && <button onClick={()=>refreshProject(selectedProject)} disabled={busy} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold disabled:opacity-50">{busy ? "Memeriksa…" : "Periksa hasil lagi"}</button>}<div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Lirik</div><pre className="whitespace-pre-wrap font-sans text-sm leading-7 text-zinc-300">{selectedProject.lyrics}</pre></div><button onClick={async()=>{await removeProject(selectedProject.id);setSelectedProject(null);setView("library")}} disabled={busy} className="flex items-center gap-2 text-sm text-red-300 disabled:opacity-50"><Trash2 size={15}/> Hapus project</button></div></div></section>;
 
   const renderProfile = () => <section><div className="card p-6"><div className="flex items-center gap-4"><div className="grid h-16 w-16 place-items-center rounded-full bg-violet-500/20"><UserRound size={30}/></div><div><h1 className="text-xl font-extrabold">SALVIAN AI</h1><p className="text-sm text-zinc-500">{userEmail || "Belum login"}</p></div></div><div className="mt-6 grid grid-cols-2 gap-3"><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Paket</div><div className="mt-1 font-bold">{plan}</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Kredit</div><div className="mt-1 font-bold">{credits === null ? "—" : credits.toLocaleString("id-ID")}</div></div></div></div></section>;
 
-  return <main className="min-h-screen pb-28"><header className="sticky top-0 z-20 border-b border-white/8 bg-[#08080b]/85 backdrop-blur-xl"><div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6"><div><div className="text-lg font-black tracking-tight">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[10px] uppercase tracking-[.25em] text-zinc-500">Music</div></div><div className="flex items-center gap-3"><div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold">{credits === null ? "—" : `${credits.toLocaleString("id-ID")} kredit`}</div><button onClick={()=>setAdvanced(v=>!v)} className={`rounded-full border px-3 py-1.5 text-xs font-bold ${advanced ? "border-violet-400/40 bg-violet-500/15 text-violet-200" : "border-white/10 bg-white/5 text-zinc-300"}`}>Advanced</button></div></div></header><div className="mx-auto max-w-6xl px-4 pt-7 sm:px-6">{view === "create" && renderCreate()}{view === "library" && renderLibrary()}{view === "project" && renderProject()}{view === "profile" && renderProfile()}</div>{showModels && <div className="fixed inset-0 z-40 grid place-items-end bg-black/70 p-3 sm:place-items-center"><div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#111116] p-5 shadow-2xl"><div className="mb-4 flex items-center justify-between"><h2 className="font-extrabold">Pilih model</h2><button onClick={()=>setShowModels(false)}><X size={19}/></button></div>{["v5.5 Pro","v5 Pro","v4.5+","v4.5","v4.5-all","Lyrics Model Classic"].map(item=><button key={item} onClick={()=>{setModel(item);setShowModels(false)}} className={`mb-2 flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left ${model===item?"border-violet-400/40 bg-violet-500/10":"border-white/8 bg-white/5"}`}><span className="font-semibold">{item}</span>{model===item&&<span className="text-xs text-violet-300">Dipilih</span>}</button>)}</div></div>}<nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-white/8 bg-[#09090c]/90 backdrop-blur-xl"><div className="mx-auto grid max-w-xl grid-cols-4 px-2 py-2"><button onClick={()=>setView("create")} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="create"?"text-violet-200":"text-zinc-500"}`}><Home size={18}/><span>Buat</span></button><button onClick={()=>setView("library")} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="library"||view==="project"?"text-violet-200":"text-zinc-500"}`}><Library size={18}/><span>Library</span></button><button onClick={()=>setView("profile")} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="profile"?"text-violet-200":"text-zinc-500"}`}><UserRound size={18}/><span>Akun</span></button><button onClick={login} className="flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] text-zinc-500"><LogIn size={18}/><span>Creator</span></button></div></nav></main>;
+  return <main className="min-h-screen pb-28"><header className="sticky top-0 z-20 border-b border-white/8 bg-[#08080b]/85 backdrop-blur-xl"><div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6"><div><div className="text-lg font-black tracking-tight">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[10px] uppercase tracking-[.25em] text-zinc-500">Music</div></div><div className="flex items-center gap-3"><div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold">{credits === null ? "—" : `${credits.toLocaleString("id-ID")} kredit`}</div><button onClick={()=>setAdvanced(v=>!v)} className={`rounded-full border px-3 py-1.5 text-xs font-bold ${advanced ? "border-violet-400/40 bg-violet-500/15 text-violet-200" : "border-white/10 bg-white/5 text-zinc-300"}`}>Advanced</button></div></div></header><div className="mx-auto max-w-6xl px-4 pt-7 sm:px-6">{view === "create" && renderCreate()}{view === "library" && renderLibrary()}{view === "project" && renderProject()}{view === "profile" && renderProfile()}</div>{showModels && <div className="fixed inset-0 z-40 grid place-items-end bg-black/70 p-3 sm:place-items-center"><div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#111116] p-5 shadow-2xl"><div className="mb-4 flex items-center justify-between"><h2 className="font-extrabold">Pilih model</h2><button onClick={()=>setShowModels(false)}><X size={19}/></button></div>{["v5.5 Pro","v5 Pro","v4.5+","v4.5","v4.5-all","Lyrics Model Classic"].map(item=><button key={item} onClick={()=>{setModel(item);setShowModels(false)}} className={`mb-2 flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left ${model===item?"border-violet-400/40 bg-violet-500/10":"border-white/8 bg-white/5"}`}><span className="font-semibold">{item}</span>{model===item&&<span className="text-xs text-violet-300">Dipilih</span>}</button>)}</div></div>}<nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-white/8 bg-[#09090c]/90 backdrop-blur-xl"><div className="mx-auto grid max-w-xl grid-cols-4 px-2 py-2"><button onClick={()=>setView("create")} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="create"?"text-violet-200":"text-zinc-500"}`}><Home size={18}/><span>Buat</span></button><button onClick={async()=>{setView("library");if(token) await loadLibrary(token,true)}} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="library"||view==="project"?"text-violet-200":"text-zinc-500"}`}><Library size={18}/><span>Library</span></button><button onClick={()=>setView("profile")} className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] ${view==="profile"?"text-violet-200":"text-zinc-500"}`}><UserRound size={18}/><span>Akun</span></button><button onClick={login} className="flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] text-zinc-500"><LogIn size={18}/><span>Creator</span></button></div></nav></main>;
 }
