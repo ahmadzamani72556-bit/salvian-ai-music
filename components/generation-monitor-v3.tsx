@@ -9,6 +9,7 @@ const DATA = "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.n
 const neon = createClient({ auth: { url: AUTH }, dataApi: { url: DATA } });
 const TERMINAL = ["succeeded", "success", "completed", "complete", "done", "failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"];
 const FAILURE = ["failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"];
+const CONTROL_LIMIT_SECONDS = 15 * 60;
 
 type ActiveTask = { id: string; startedAt: number };
 
@@ -30,6 +31,7 @@ export default function GenerationMonitorV3() {
   const [done, setDone] = useState(false);
   const [failed, setFailed] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [lastCheck, setLastCheck] = useState(0);
 
   useEffect(() => {
     let stopped = false;
@@ -42,11 +44,7 @@ export default function GenerationMonitorV3() {
     const startPending = () => {
       if (stopped) return;
       current = { id: "pending", startedAt: Date.now() };
-      setTaskId("pending");
-      setStatus("preparing");
-      setDone(false);
-      setFailed(false);
-      setElapsed(0);
+      setTaskId("pending"); setStatus("preparing"); setDone(false); setFailed(false); setElapsed(0); setLastCheck(0);
       if (hideTimer) window.clearTimeout(hideTimer);
     };
 
@@ -55,11 +53,7 @@ export default function GenerationMonitorV3() {
       const startedAt = createdAt > 0 ? createdAt : current?.startedAt || Date.now();
       current = { id, startedAt };
       setCookie("salvian_generation_task", id);
-      setTaskId(id);
-      setStatus("preparing");
-      setDone(false);
-      setFailed(false);
-      setElapsed(Math.max(0, (Date.now() - startedAt) / 1000));
+      setTaskId(id); setStatus("preparing"); setDone(false); setFailed(false); setElapsed(Math.max(0, (Date.now() - startedAt) / 1000));
     };
 
     const getToken = async () => {
@@ -78,12 +72,7 @@ export default function GenerationMonitorV3() {
       const jwt = await getToken();
       if (!jwt || stopped) return;
       try {
-        const res = await originalFetch("/api/music", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify({ action: "status", taskId: id }),
-          cache: "no-store",
-        });
+        const res = await originalFetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "status", taskId: id }), cache: "no-store" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || stopped) return;
         const next = String(data.status || "preparing");
@@ -91,26 +80,18 @@ export default function GenerationMonitorV3() {
         const providerCreated = Number(data.createdAt || 0) * 1000;
         const startedAt = providerCreated > 0 ? providerCreated : (current?.startedAt || Date.now());
         current = { id, startedAt };
-        setStatus(next);
-        setFailed(bad);
-        setElapsed(Math.max(0, (Date.now() - startedAt) / 1000));
+        setStatus(next); setFailed(bad); setLastCheck(Date.now()); setElapsed(Math.max(0, (Date.now() - startedAt) / 1000));
         if (data.finished === true || isTerminal(next)) {
-          clearCookie("salvian_generation_task");
-          setDone(!bad);
+          clearCookie("salvian_generation_task"); setDone(!bad);
           if (hideTimer) window.clearTimeout(hideTimer);
-          hideTimer = window.setTimeout(() => {
-            if (!stopped && current?.id === id) { current = null; setTaskId(""); }
-          }, 15000);
+          hideTimer = window.setTimeout(() => { if (!stopped && current?.id === id) { current = null; setTaskId(""); } }, 15000);
         }
-      } catch (error) {
-        console.error("SALVIAN MUSIC MONITOR", error);
-      }
+      } catch (error) { console.error("SALVIAN MUSIC MONITOR", error); }
     };
 
     const onStart = (event: Event) => {
       const detail = (event as CustomEvent<{ taskId?: string; createdAt?: number }>).detail;
-      if (detail?.taskId && detail.taskId !== "pending") attach(String(detail.taskId), Number(detail.createdAt || 0));
-      else startPending();
+      if (detail?.taskId && detail.taskId !== "pending") attach(String(detail.taskId), Number(detail.createdAt || 0)); else startPending();
       void check();
     };
 
@@ -127,14 +108,11 @@ export default function GenerationMonitorV3() {
     document.addEventListener("click", onPointer, true);
 
     const patchedFetch: typeof window.fetch = async (...args) => {
-      const request = args[0];
-      const init = args[1];
+      const request = args[0]; const init = args[1];
       const url = typeof request === "string" ? request : request instanceof Request ? request.url : "";
       const method = (init?.method || (request instanceof Request ? request.method : "GET")).toUpperCase();
       let action = "";
-      if (typeof init?.body === "string") {
-        try { action = String((JSON.parse(init.body) as Record<string, unknown>)?.action || ""); } catch {}
-      }
+      if (typeof init?.body === "string") { try { action = String((JSON.parse(init.body) as Record<string, unknown>)?.action || ""); } catch {} }
       const generation = url.includes("/api/music") && method === "POST" && action !== "status" && action !== "balance";
       if (generation) startPending();
       const response = await originalFetch(...args);
@@ -144,16 +122,9 @@ export default function GenerationMonitorV3() {
           const id = data?.taskId ? String(data.taskId) : "";
           const createdRaw = Number(data?.createdAt || 0);
           const created = createdRaw > 0 ? createdRaw * 1000 : current?.startedAt || Date.now();
-          if (id) {
-            attach(id, created);
-            void check();
-          } else if (!data?.success) {
-            setFailed(true);
-            setStatus("failed");
-          }
-        }).catch(() => {
-          if (!stopped) { setFailed(true); setStatus("error"); }
-        });
+          if (id) { attach(id, created); void check(); }
+          else if (!data?.success) { setFailed(true); setStatus("failed"); }
+        }).catch(() => { if (!stopped) { setFailed(true); setStatus("error"); } });
       }
       return response;
     };
@@ -164,23 +135,29 @@ export default function GenerationMonitorV3() {
     void check();
     pollTimer = window.setInterval(() => void check(), 5000);
     clockTimer = window.setInterval(() => {
-      if (!stopped && current?.startedAt) setElapsed(Math.max(0, (Date.now() - current.startedAt) / 1000));
+      if (!stopped && current?.startedAt) {
+        const seconds = Math.max(0, (Date.now() - current.startedAt) / 1000);
+        setElapsed(seconds);
+        // Local controller: if the provider has not completed after 15 minutes,
+        // stop presenting it as an active generation and surface a timeout state.
+        if (seconds >= CONTROL_LIMIT_SECONDS && current.id !== "pending" && !done && !failed) {
+          setFailed(true); setStatus("timeout"); clearCookie("salvian_generation_task");
+        }
+      }
     }, 1000);
 
     return () => {
       stopped = true;
       window.removeEventListener("salvian-generation-started", onStart);
-      document.removeEventListener("pointerdown", onPointer, true);
-      document.removeEventListener("click", onPointer, true);
-      if (pollTimer) window.clearInterval(pollTimer);
-      if (clockTimer) window.clearInterval(clockTimer);
-      if (hideTimer) window.clearTimeout(hideTimer);
+      document.removeEventListener("pointerdown", onPointer, true); document.removeEventListener("click", onPointer, true);
+      if (pollTimer) window.clearInterval(pollTimer); if (clockTimer) window.clearInterval(clockTimer); if (hideTimer) window.clearTimeout(hideTimer);
       window.fetch = originalFetch;
     };
-  }, []);
+  }, [done, failed]);
 
   if (!taskId) return null;
   const pending = taskId === "pending";
+  const controlPercent = Math.min(100, (elapsed / CONTROL_LIMIT_SECONDS) * 100);
 
   return (
     <div className="fixed bottom-20 left-3 right-3 z-[70] mx-auto max-w-xl rounded-2xl border border-violet-400/30 bg-[#111116]/98 p-4 shadow-2xl backdrop-blur-xl">
@@ -194,10 +171,14 @@ export default function GenerationMonitorV3() {
             <div className="flex items-center gap-1 text-xs font-semibold text-violet-200"><Clock3 size={13} /> {duration(elapsed)}</div>
           </div>
           <p className="mt-1 text-xs leading-5 text-zinc-400">
-            {failed ? (pending ? "Server belum memberikan Task ID. Jangan menekan Buat Lagu lagi; tunggu pemeriksaan selesai." : "Mesin musik melaporkan proses gagal.") : done ? "Lagu selesai. Project sudah diperbarui di Library." : "Proses sedang dipantau. Task akan disimpan agar dapat dilanjutkan."}
+            {failed ? (status === "timeout" ? "Batas kontrol 15 menit tercapai. Proses ditandai timeout agar tidak menunggu tanpa batas." : pending ? "Server belum memberikan Task ID. Jangan menekan Buat Lagu lagi; tunggu respons provider." : "Mesin musik melaporkan proses gagal.") : done ? "Lagu selesai. Project sudah diperbarui di Library." : "Proses dipantau otomatis setiap 5 detik. Waktu kontrol maksimal 15 menit."}
           </p>
-          {!done && !failed && <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full w-1/3 animate-[pulse_1.5s_ease-in-out_infinite] rounded-full bg-violet-400" /></div>}
+          {!done && !failed && <>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-violet-400 transition-[width] duration-1000" style={{ width: `${Math.max(2, controlPercent)}%` }} /></div>
+            <div className="mt-1 flex justify-between text-[9px] text-zinc-600"><span>Kontrol waktu</span><span>15:00</span></div>
+          </>}
           <div className="mt-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500"><span>{stage(status)}</span><span>{pending ? "Task menunggu respons" : `Task ${taskId}`}</span></div>
+          {lastCheck > 0 && !done && !failed && <div className="mt-1 text-[9px] text-zinc-600">Pemeriksaan terakhir: {new Date(lastCheck).toLocaleTimeString("id-ID")}</div>}
         </div>
       </div>
     </div>
