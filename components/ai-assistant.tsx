@@ -2,8 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { MessageCircle, Send, Sparkles, X } from "lucide-react";
-import { neon } from "@neondatabase/neon-js";
-import { BetterAuthVanillaAdapter } from "@neondatabase/neon-js/auth/adapter";
+import { createClient, BetterAuthVanillaAdapter } from "@neondatabase/neon-js";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -12,13 +11,9 @@ const welcome: Message = {
   content: "Halo! Saya Asisten AI SALVIAN AI MUSIC. Saya bisa membantu soal daftar/login akun, kredit, Library, cara membuat lagu, atau masalah di aplikasi.",
 };
 
-const neonClient = neon({
-  auth: {
-    url: process.env.NEXT_PUBLIC_NEON_AUTH_URL!,
-    adapter: BetterAuthVanillaAdapter(),
-  },
-  dataApi: { url: process.env.NEXT_PUBLIC_NEON_DATA_API_URL! },
-});
+const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
+const DATA = "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
+const neon = createClient({ auth: { url: AUTH, adapter: BetterAuthVanillaAdapter() }, dataApi: { url: DATA } });
 
 export default function AiAssistant() {
   const [open, setOpen] = useState(false);
@@ -37,7 +32,8 @@ export default function AiAssistant() {
     setBusy(true);
 
     try {
-      const token = await neonClient.auth.getJWTToken();
+      const auth = neon.auth as unknown as { getJWTToken?: (allowAnonymous?: boolean) => Promise<string | null> };
+      const token = await auth.getJWTToken?.(false);
       if (!token) throw new Error("Silakan masuk melalui Akun SALVIAN AI CREATOR terlebih dahulu.");
 
       const res = await fetch("/api/assistant", {
