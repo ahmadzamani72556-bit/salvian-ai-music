@@ -19,52 +19,33 @@ s = s.replace(
 // Neon Auth exposes getJwtToken() (lowercase wt), not getJWTToken().
 s = s.replace(/getJWTToken/g, "getJwtToken");
 
-// Mark Creator account navigation as coming from Music so its back button always returns here.
+// Creator is the single account hub. Always mark navigation from Music.
 s = s.replace(
   'const openCreator = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html"; };',
   'const openCreator = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html?from=music"; };'
 );
 
-if (!s.includes("const [authName, setAuthName]")) {
-  s = s.replace(
-    'const [authEmail, setAuthEmail] = useState("");\n  const [authPassword, setAuthPassword] = useState("");',
-    'const [authName, setAuthName] = useState("");\n  const [authEmail, setAuthEmail] = useState("");\n  const [authPassword, setAuthPassword] = useState("");'
-  );
-}
+// Keep the same account/session in Music after returning from Creator via back/forward.
+const oldEffect = /  useEffect\(\(\) => \{\n    \(async \(\) => \{\n      try \{ await syncSession\(\); \}\n      catch \(error\) \{ console\.error\("SALVIAN AUTH INIT", error\); \}\n    \}\)\(\);\n  \}, \[\]\);/;
+const newEffect = `  useEffect(() => {
+    (async () => {
+      try { await syncSession(); }
+      catch (error) { console.error("SALVIAN AUTH INIT", error); }
+    })();
+    const resync = () => { syncSession().catch(error => console.error("SALVIAN AUTH RESYNC", error)); };
+    window.addEventListener("pageshow", resync);
+    window.addEventListener("focus", resync);
+    return () => {
+      window.removeEventListener("pageshow", resync);
+      window.removeEventListener("focus", resync);
+    };
+  }, []);`;
+if (oldEffect.test(s)) s = s.replace(oldEffect, newEffect);
 
-s = s.replace(
-  'setUserName((user as { name?: string }).name || "");\n    setUserEmail(user.email || "");',
-  'setUserName((user as { name?: string }).name || "");\n    setUserEmail(user.email || "");\n    setAuthName((user as { name?: string }).name || "");\n    setAuthEmail(user.email || "");'
-);
-
-const oldLogin = /  const signInMusic = async \(\) => \{[\s\S]*?\n  \};\n\n  const helpLyrics/;
-const newLogin = `  const signInMusic = async () => {
-    if (!authEmail.trim() || !authPassword) {
-      setNotice("Masukkan alamat Gmail dan password akun SALVIAN AI CREATOR.");
-      return;
-    }
-    setAuthBusy(true); setNotice("Memproses login akun SALVIAN AI…");
-    try {
-      const authClient = neon.auth as unknown as { signIn?: { email?: (input: { email: string; password: string; rememberMe?: boolean }) => Promise<{ data?: unknown; error?: { message?: string } | null }> } };
-      if (!authClient.signIn?.email) throw new Error("Metode login Neon Auth belum tersedia pada versi SDK ini.");
-      const result = await authClient.signIn.email({ email: authEmail.trim(), password: authPassword, rememberMe: true });
-      if (result?.error) throw new Error(result.error.message || "Login gagal. Periksa email dan password.");
-      const ok = await syncSession();
-      if (!ok) throw new Error("Login berhasil, tetapi sesi belum terbaca. Silakan muat ulang halaman sekali.");
-      setAuthPassword("");
-      setNotice("Login berhasil. Akun SALVIAN AI MUSIC sekarang terhubung ke akun Creator yang sama.");
-    } catch (error) { setNotice(error instanceof Error ? error.message : "Login gagal."); }
-    finally { setAuthBusy(false); }
-  };
-
-  const helpLyrics`;
-if (!oldLogin.test(s)) throw new Error("signInMusic block not found");
-s = s.replace(oldLogin, newLogin);
-
+// Account UI in Music is status-only. Registration/login happens in the central Creator account hub.
 const oldProfile = /const renderProfile = \(\) => <section><div className="card p-6">[\s\S]*?Buka Akun SALVIAN AI CREATOR<\/button><\/div> :/;
-const profileReplacement = `const renderProfile = () => <section><div className="card p-6"><div className="flex items-center gap-4"><div className="grid h-16 w-16 place-items-center rounded-full bg-violet-500/20"><UserRound size={30}/></div><div><h1 className="text-xl font-extrabold">{userName || ""}</h1><p className="text-sm text-zinc-500">{userEmail || "Belum login"}</p></div></div>{!token ? <div className="mt-6 space-y-3"><p className="text-sm text-zinc-400">Login di sini menggunakan akun yang sama dengan SALVIAN AI CREATOR. Masukkan alamat Gmail dan password akun Creator Anda.</p><label className="block text-xs font-semibold text-zinc-400">Alamat Gmail</label><input value={authEmail} onChange={e=>setAuthEmail(e.target.value)} type="email" placeholder="Alamat Gmail akun Creator" autoComplete="email" className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-600"/><label className="block text-xs font-semibold text-zinc-400">Password</label><input value={authPassword} onChange={e=>setAuthPassword(e.target.value)} type="password" placeholder="Password akun Creator" autoComplete="current-password" className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-600"/><button onClick={signInMusic} disabled={authBusy} className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-extrabold text-black disabled:opacity-60"><LogIn size={17}/>{authBusy ? "Memproses…" : "Masuk ke SALVIAN AI MUSIC"}</button><button onClick={openCreator} className="w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-zinc-200">Buka Akun SALVIAN AI CREATOR</button></div> :`;
-if (!oldProfile.test(s)) throw new Error("renderProfile block not found");
-s = s.replace(oldProfile, profileReplacement);
+const profileReplacement = `const renderProfile = () => <section><div className="card p-6"><div className="flex items-center gap-4"><div className="grid h-16 w-16 place-items-center rounded-full bg-violet-500/20"><UserRound size={30}/></div><div><h1 className="text-xl font-extrabold">{userName || "Akun SALVIAN AI"}</h1><p className="text-sm text-zinc-500">{userEmail || "Akun belum aktif"}</p></div></div>{!token ? <div className="mt-6 space-y-3"><div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4 text-sm text-amber-100">Akun Music mengikuti akun induk SALVIAN AI CREATOR. Daftar atau masuk hanya dilakukan di akun induk.</div><button onClick={openCreator} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-extrabold text-black">Daftar / Masuk Akun SALVIAN AI CREATOR</button></div> : <><div className="mt-6 grid grid-cols-2 gap-3"><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Status</div><div className="mt-1 font-bold text-emerald-300">✓ Aktif</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Paket</div><div className="mt-1 font-bold">{plan}</div></div><div className="rounded-2xl border border-white/8 bg-black/20 p-4"><div className="text-xs text-zinc-500">Kredit</div><div className="mt-1 font-bold">{credits === null ? "—" : credits.toLocaleString("id-ID")}</div></div></div><button onClick={openCreator} className="mt-4 w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-zinc-200">Kelola Akun Induk &amp; Kredit</button></>}</div>{notice && <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-100">{notice}</div>}</section>`;
+if (oldProfile.test(s)) s = s.replace(oldProfile, profileReplacement);
 
 fs.writeFileSync(file, s);
-console.log("SALVIAN auth patch applied");
+console.log("SALVIAN auth/account hub patch applied");
