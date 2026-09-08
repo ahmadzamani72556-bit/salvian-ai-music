@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { refundMusicCreditsServer, updateMusicProjectServer } from "../../../lib/server-credit-refund";
+import { createMusicProjectServer, refundMusicCreditsServer, updateMusicProjectServer } from "../../../lib/server-credit-refund";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -97,9 +97,37 @@ async function saveProject(auth: string, body: Record<string, unknown>) {
     const direct = await fetch(`${DATA_API}/salvian_music_projects`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" }, body: JSON.stringify({ user_id: userId, title: body.title, lyrics: body.lyrics, style: body.style || "", model: body.model || "auto", task_id: body.taskId || null, status: body.status || "preparing", audio_url: body.audio || null, provider_data: body.providerData || null, updated_at: new Date().toISOString() }), cache: "no-store" });
     const data = await direct.json().catch(() => null);
     if (direct.ok) return { ok: true, data };
+
+    // Recovery path: if the authenticated Data API insert fails after Mureka has
+    // already accepted the task, save it through the privileged server connection.
+    // This keeps the task trackable and prevents a paid task from becoming orphaned.
+    try {
+      const recovered = await createMusicProjectServer(userId, {
+        title: String(body.title || "Salvian AI Song"),
+        lyrics: String(body.lyrics || ""),
+        style: String(body.style || ""),
+        model: String(body.model || "auto"),
+        taskId: body.taskId ? String(body.taskId) : null,
+        status: String(body.status || "preparing"),
+        audioUrl: body.audio ? String(body.audio) : null,
+        providerData: body.providerData ?? null,
+      });
+      if (recovered) return { ok: true, data: recovered, recovered: true };
+    } catch (error) {
+      console.error("MUSIC LIBRARY SERVER RECOVERY ERROR", error);
+    }
   }
   const fallback = await rpc(auth, "salvian_create_music_project", { p_title: body.title, p_lyrics: body.lyrics, p_style: body.style || "", p_model: body.model || "auto", p_task_id: body.taskId || null, p_status: body.status || "preparing", p_audio_url: body.audio || null, p_provider_data: body.providerData || null });
   return { ok: fallback.response.ok, data: fallback.data };
+}
+
+async function ownsTask(auth: string, taskId: string) {
+  const userId = subject(auth);
+  if (!userId) return false;
+  const response = await fetch(`${DATA_API}/salvian_music_projects?user_id=eq.${encodeURIComponent(userId)}&task_id=eq.${encodeURIComponent(taskId)}&select=id&limit=1`, { method: "GET", headers: { Authorization: auth, Accept: "application/json" }, cache: "no-store" });
+  if (!response.ok) return false;
+  const data = await response.json().catch(() => []);
+  return Array.isArray(data) && data.length > 0;
 }
 
 async function patchProject(auth: string, taskId: string, status: string, audio: string | null, providerData: unknown) {
@@ -132,6 +160,12 @@ export async function POST(request: NextRequest) {
     if (action === "status") {
       const taskId = String(body?.taskId || body?.task_id || body?.id || "");
       if (!taskId) return NextResponse.json({ success: false, error: "Task ID belum dikirim." }, { status: 400 });
+
+      // Never query Mureka for a task unless that task belongs to this SALVIAN user.
+      // This is defense-in-depth even though the Library table also has RLS.
+      const owned = await ownsTask(auth, taskId);
+      if (!owned) return NextResponse.json({ success: false, error: "Task tidak ditemukan pada Library akun ini." }, { status: 403 });
+
       const q = await provider(`/v1/song/query/${encodeURIComponent(taskId)}`, { method: "GET" });
       if (!q.response.ok) return NextResponse.json({ success: false, taskId, error: q.data?.error?.message || q.data?.message || q.data?.error || `Mureka Query ${q.response.status}`, data: q.data }, { status: q.response.status });
       const status = findStatus(q.data);
@@ -193,7 +227,14 @@ export async function POST(request: NextRequest) {
       terminalProviderData = generated.data;
 
       const saved = await saveProject(auth, { title: String(body?.title || "Salvian AI Song").slice(0, 160), lyrics, style, model: String(body?.model || model).slice(0, 80), taskId, status, audio, providerData: generated.data });
-      const result = NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), creditCost: MUSIC_CREDIT_COST, librarySaved: saved.ok, createdAt: Number(generated.data?.created_at || generated.data?.data?.created_at || 0), data: generated.data });
+      if (!saved.ok) {
+        // The provider accepted the task but the Library could not persist it.
+        // Refund immediately so the user is not charged for an untrackable task.
+        try { await refund(auth); } catch (e) { console.error("MUSIC ORPHAN TASK REFUND ERROR", e); }
+        return NextResponse.json({ success: false, error: "Task Mureka berhasil dibuat tetapi Library gagal menyimpan task. Kredit sudah dikembalikan.", taskId, librarySaved: false }, { status: 503 });
+      }
+
+      const result = NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), creditCost: MUSIC_CREDIT_COST, librarySaved: true, libraryRecovered: saved.recovered === true, createdAt: Number(generated.data?.created_at || generated.data?.data?.created_at || 0), data: generated.data });
       if (!done) result.cookies.set("salvian_generation_task", taskId, { path: "/", maxAge: 3600, sameSite: "lax" });
       return result;
     } finally {
