@@ -4,11 +4,23 @@ const path = require("path");
 const file = path.join(process.cwd(), "app", "page.tsx");
 let s = fs.readFileSync(file, "utf8");
 
-s = s.replace('import { createClient } from "@neondatabase/neon-js";', 'import { createClient, BetterAuthVanillaAdapter } from "@neondatabase/neon-js";');
-s = s.replace('const neon = createClient({ auth: { url: AUTH }, dataApi: { url: DATA } });', 'const neon = createClient({ auth: { url: AUTH, adapter: BetterAuthVanillaAdapter() }, dataApi: { url: DATA } });');
-s = s.replace(/getJWTToken/g, "getJwtToken");
-s = s.replace('const openCreator = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html"; };', 'const openCreator = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html?from=music"; };');
-s = s.replace('useState<"create" | "library" | "project" | "profile">', 'useState<"create" | "library" | "project" | "profile">');
+// NeonJS unified client + Better Auth adapter.
+s = s.replace(
+  'import { createClient } from "@neondatabase/neon-js";',
+  'import { createClient, BetterAuthVanillaAdapter } from "@neondatabase/neon-js";'
+);
+s = s.replace(
+  'const neon = createClient({ auth: { url: AUTH }, dataApi: { url: DATA } });',
+  'const neon = createClient({ auth: { url: AUTH, adapter: BetterAuthVanillaAdapter() }, dataApi: { url: DATA } });'
+);
+
+// IMPORTANT: neon-js 0.7 exposes getJWTToken() on the auth client.
+// Do not rename it to getJwtToken().
+
+s = s.replace(
+  'const openCreator = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html"; };',
+  'const openCreator = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html?from=music"; };'
+);
 
 const oldEffect = `  useEffect(() => {
     (async () => {
@@ -16,6 +28,7 @@ const oldEffect = `  useEffect(() => {
       catch (error) { console.error("SALVIAN AUTH INIT", error); }
     })();
   }, []);`;
+
 const newEffect = `  useEffect(() => {
     (async () => {
       try { await syncSession(); }
@@ -29,6 +42,7 @@ const newEffect = `  useEffect(() => {
       window.removeEventListener("focus", resync);
     };
   }, []);`;
+
 s = s.replace(oldEffect, newEffect);
 
 const start = s.indexOf("  const renderProfile = () =>");
