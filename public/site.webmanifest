@@ -1,0 +1,14 @@
+{
+  "name":"SALVIAN AI MUSIC STUDIO",
+  "short_name":"SALVIAN AI MUSIC",
+  "description":"Studio AI musik kelas premium untuk membuat karya musik dengan AI.",
+  "start_url":"/",
+  "scope":"/",
+  "display":"standalone",
+  "background_color":"#02030a",
+  "theme_color":"#7c3aed",
+  "orientation":"portrait-primary",
+  "icons":[
+    {"src":"/salvian-logo.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}
