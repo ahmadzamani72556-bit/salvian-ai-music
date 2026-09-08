@@ -36,6 +36,51 @@ export async function refundMusicCreditsServer(
 }
 
 /**
+ * Server-side recovery path for the rare case where the authenticated Data API
+ * insert cannot save a newly accepted Mureka task. This prevents a paid task
+ * from becoming untracked just because the browser-facing DB path failed.
+ */
+export async function createMusicProjectServer(
+  userId: string,
+  body: {
+    title: string;
+    lyrics: string;
+    style: string;
+    model: string;
+    taskId: string | null;
+    status: string;
+    audioUrl: string | null;
+    providerData: unknown;
+  }
+) {
+  if (!userId || !body.taskId) {
+    throw new Error("Parameter create project tidak valid.");
+  }
+
+  const sql = getSql();
+  const rows = await sql`
+    INSERT INTO public.salvian_music_projects
+      (user_id, title, lyrics, style, model, task_id, status, audio_url, provider_data, updated_at)
+    VALUES
+      (
+        ${userId},
+        ${body.title},
+        ${body.lyrics},
+        ${body.style},
+        ${body.model},
+        ${body.taskId},
+        ${body.status},
+        ${body.audioUrl},
+        ${body.providerData == null ? null : JSON.stringify(body.providerData)}::jsonb,
+        now()
+      )
+    RETURNING id, user_id, task_id, status, audio_url, updated_at
+  `;
+
+  return rows?.[0] ?? null;
+}
+
+/**
  * The client is intentionally denied UPDATE on salvian_music_projects.
  * Generation status/audio/provider data therefore must be written here,
  * from the privileged server connection, and only for the authenticated user's row.
