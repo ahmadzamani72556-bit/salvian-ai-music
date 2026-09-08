@@ -55,22 +55,61 @@ export default function PremiumMusicStudio() {
   const fileReference = useRef<HTMLInputElement>(null);
   const fileVocal = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const syncGeneration = useRef(0);
 
   const syncSession = async () => {
+    const generation = ++syncGeneration.current;
     try {
       const session = await neon.auth.getSession();
       const user = session?.data?.user;
-      if (!user) return false;
+      if (!user) {
+        if (generation === syncGeneration.current) {
+          setToken(null); setCredits(null); setUserName("");
+        }
+        return false;
+      }
+      if (generation !== syncGeneration.current) return false;
       setUserName((user as { name?: string }).name || user.email || "Creator");
+
       const auth = neon.auth as unknown as { getJWTToken?: (allowAnonymous?: boolean) => Promise<string | null> };
-      const jwt = await auth.getJWTToken?.(false);
-      if (!jwt) return false;
+      let jwt: string | null = null;
+      try { jwt = await auth.getJWTToken?.(); } catch {}
+      if (!jwt) {
+        try {
+          const sessionRes = await fetch(`${AUTH}/get-session`, { credentials: "include", cache: "no-store" });
+          jwt = sessionRes.headers.get("set-auth-jwt");
+        } catch {}
+      }
+      if (!jwt) {
+        if (generation === syncGeneration.current) {
+          setToken(null); setCredits(null);
+          setNotice("Akun sudah ditemukan, tetapi token akun belum siap. Sedang mencoba sinkronisasi ulang…");
+        }
+        return false;
+      }
+      if (generation !== syncGeneration.current) return false;
       setToken(jwt);
-      const res = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "balance" }), cache: "no-store" });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) { setCredits(Number(data.credits || 0)); setPlan(String(data.plan || "FREE")); }
-      return true;
-    } catch { return false; }
+      const [balanceRes, libraryRes] = await Promise.all([
+        fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "balance" }), cache: "no-store" }),
+        fetch("/api/projects", { headers: { Authorization: `Bearer ${jwt}` }, cache: "no-store" }),
+      ]);
+      const data = await balanceRes.json().catch(() => ({}));
+      const libraryData = await libraryRes.json().catch(() => ({}));
+      if (generation !== syncGeneration.current) return false;
+      if (balanceRes.ok) {
+        setCredits(Number(data.credits));
+        setPlan(String(data.plan || "FREE"));
+        setNotice("");
+      } else {
+        setCredits(null);
+        setNotice(String(data.error || "Gagal membaca saldo kredit akun induk."));
+      }
+      if (libraryRes.ok) setProjects(Array.isArray(libraryData.projects) ? libraryData.projects.map(projectFromRow) : []);
+      return balanceRes.ok;
+    } catch (error) {
+      if (generation === syncGeneration.current) setNotice(error instanceof Error ? error.message : "Sinkronisasi akun gagal.");
+      return false;
+    }
   };
 
   const loadLibrary = async () => {
@@ -80,7 +119,19 @@ export default function PremiumMusicStudio() {
     if (res.ok) setProjects(Array.isArray(data.projects) ? data.projects.map(projectFromRow) : []);
   };
 
-  useEffect(() => { void syncSession(); }, []);
+  useEffect(() => {
+    void syncSession();
+    const resync = () => { void syncSession(); };
+    const onVisibility = () => { if (document.visibilityState === "visible") void syncSession(); };
+    window.addEventListener("pageshow", resync);
+    window.addEventListener("focus", resync);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pageshow", resync);
+      window.removeEventListener("focus", resync);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
   useEffect(() => { if (active === "library" && token) void loadLibrary(); }, [active, token]);
 
   const uploadFile = async (file: File, purpose: "reference" | "voice") => {
@@ -116,9 +167,10 @@ export default function PremiumMusicStudio() {
 
   const ask = async (event?: FormEvent) => {
     event?.preventDefault(); const message = chatInput.trim(); if (!message || chatBusy) return;
+    if (!token) { setNotice("Akun belum tersinkron. Silakan tunggu sebentar atau buka Akun."); void syncSession(); return; }
     const history = messages.slice(-10); setChatInput(""); setMessages(prev => [...prev, { role: "user", content: message }]); setChatBusy(true);
     try {
-      const res = await fetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, history }) });
+      const res = await fetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ message, history }) });
       const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Asisten AI sedang tidak tersedia.");
       setMessages(prev => [...prev, { role: "assistant", content: String(data.answer || "Maaf, saya belum dapat menjawab.") }]);
     } catch (e) { setMessages(prev => [...prev, { role: "assistant", content: e instanceof Error ? e.message : "Terjadi kesalahan." }]); } finally { setChatBusy(false); }
@@ -126,9 +178,10 @@ export default function PremiumMusicStudio() {
 
   const generateLyrics = async () => {
     if (!prompt.trim()) { setNotice("Isi deskripsi musik dulu agar Lirik Assistant punya konteks."); return; }
+    if (!token) { setNotice("Akun belum tersinkron. Silakan tunggu sebentar atau buka Akun."); void syncSession(); return; }
     setLyricBusy(true);
     try {
-      const res = await fetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: `Buatkan lirik lagu original berbahasa ${language} berdasarkan konsep ini: ${prompt}. Gunakan struktur [Verse], [Pre-Chorus], [Chorus], [Verse 2], [Bridge], [Chorus]. Jangan meniru artis tertentu. Hanya berikan lirik.`, history: [] }) });
+      const res = await fetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ message: `Buatkan lirik lagu original berbahasa ${language} berdasarkan konsep ini: ${prompt}. Gunakan struktur [Verse], [Pre-Chorus], [Chorus], [Verse 2], [Bridge], [Chorus]. Jangan meniru artis tertentu. Hanya berikan lirik.`, history: [] }) });
       const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Lirik Assistant gagal.");
       setLyrics(String(data.answer || "")); setNotice("Lirik berhasil dibuat oleh Lirik Assistant.");
     } catch (e) { setNotice(e instanceof Error ? e.message : "Lirik Assistant gagal."); } finally { setLyricBusy(false); }
@@ -154,13 +207,13 @@ export default function PremiumMusicStudio() {
       <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_75%_5%,rgba(168,85,247,.16),transparent_30%),radial-gradient(circle_at_20%_80%,rgba(37,99,235,.12),transparent_32%)]" />
       <div className="relative flex min-h-screen">
         <aside className="hidden w-[245px] shrink-0 border-r border-white/10 bg-[#050610]/95 lg:flex lg:flex-col">
-          <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5"><div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-violet-500 via-fuchsia-500 to-blue-500 shadow-[0_0_35px_rgba(168,85,247,.5)]"><Headphones size={27}/></div><div><div className="text-xl font-black">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[9px] tracking-[.32em] text-zinc-500">MUSIC STUDIO</div></div></div>
+          <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5"><img src="/salvian-ai-logo.svg" alt="SALVIAN AI" className="h-12 w-12 rounded-2xl"/><div><div className="text-xl font-black">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[9px] tracking-[.32em] text-zinc-500">MUSIC STUDIO</div></div></div>
           <div className="flex-1 overflow-y-auto p-3">{nav.map(([id, label, Icon]) => <button key={id} onClick={() => id === "assistant" ? setChatOpen(true) : setActive(id)} className={`mb-1 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition ${active === id ? "bg-gradient-to-r from-violet-600/80 to-fuchsia-500/50 text-white shadow-lg" : "text-zinc-400 hover:bg-white/5 hover:text-white"}`}><Icon size={19}/><span>{label}</span>{id === "assistant" && <span className="ml-auto rounded-full border border-violet-400/40 px-1.5 py-0.5 text-[8px] text-violet-200">PRO</span>}</button>)}</div>
           <div className="p-4"><div className="rounded-3xl border border-violet-400/15 bg-violet-500/5 p-4"><Sparkles size={17} className="text-violet-300"/><p className="mt-2 text-xs leading-5 text-zinc-500">Musik adalah bahasa jiwa. AI adalah alatnya.</p></div></div>
         </aside>
 
         <main className="min-w-0 flex-1 overflow-y-auto pb-24">
-          <header className="sticky top-0 z-30 flex items-center justify-between border-b border-white/10 bg-[#05050c]/85 px-4 py-4 backdrop-blur-xl sm:px-7"><div className="lg:hidden"><div className="font-black">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[8px] tracking-[.3em] text-zinc-500">MUSIC STUDIO</div></div><div className="hidden lg:block"><div className="text-[10px] font-bold uppercase tracking-[.3em] text-violet-300">AI Music Creation</div><div className="text-xl font-black">Studio AI Musik Kelas Premium</div></div><div className="flex items-center gap-2"><div className="hidden items-center gap-2 rounded-2xl border border-violet-400/25 bg-violet-500/5 px-3 py-2 sm:flex"><span className="text-amber-300">◆</span><b>{credits ?? 0}</b><span className="text-xs text-zinc-500">kredit</span><button onClick={() => setActive("monetize")} className="grid h-7 w-7 place-items-center rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500"><Plus size={15}/></button></div><div className="rounded-2xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-2"><div className="flex items-center gap-1 text-xs font-black"><Crown size={14} className="text-amber-300"/> {plan === "FREE" ? "Premium" : plan}</div><div className="text-[9px] text-zinc-500">Studio Elite</div></div><button onClick={() => setActive("account")} className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-zinc-900"><UserRound size={18}/></button></div></header>
+          <header className="sticky top-0 z-30 flex items-center justify-between border-b border-white/10 bg-[#05050c]/85 px-4 py-4 backdrop-blur-xl sm:px-7"><div className="flex items-center gap-2 lg:hidden"><img src="/salvian-ai-logo.svg" alt="SALVIAN AI" className="h-9 w-9 rounded-xl"/><div><div className="font-black">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[8px] tracking-[.3em] text-zinc-500">MUSIC STUDIO</div></div></div><div className="hidden lg:block"><div className="text-[10px] font-bold uppercase tracking-[.3em] text-violet-300">AI Music Creation</div><div className="text-xl font-black">Studio AI Musik Kelas Premium</div></div><div className="flex items-center gap-2"><div className="hidden items-center gap-2 rounded-2xl border border-violet-400/25 bg-violet-500/5 px-3 py-2 sm:flex"><span className="text-amber-300">◆</span><b>{credits === null ? "…" : credits}</b><span className="text-xs text-zinc-500">kredit</span><button onClick={() => setActive("monetize")} className="grid h-7 w-7 place-items-center rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500"><Plus size={15}/></button></div><div className="rounded-2xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-2"><div className="flex items-center gap-1 text-xs font-black"><Crown size={14} className="text-amber-300"/> {plan === "FREE" ? "Premium" : plan}</div><div className="text-[9px] text-zinc-500">Studio Elite</div></div><button onClick={() => setActive("account")} className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-zinc-900"><UserRound size={18}/></button></div></header>
 
           <div className="mx-auto max-w-[1180px] px-4 py-5 sm:px-7 lg:py-7">
             {notice && <div className="mb-4 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-xs text-violet-100">{notice}</div>}
@@ -181,8 +234,8 @@ export default function PremiumMusicStudio() {
             {active === "assistant" && <section className="rounded-[30px] border border-violet-400/20 bg-[#090a13]/95 p-5 sm:p-8"><div className="flex items-center gap-3"><div className="grid h-14 w-14 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Bot size={28}/></div><div><h2 className="text-3xl font-black">Asisten AI SALVIAN</h2><p className="text-sm text-zinc-500">Partner kreatif Anda di dalam studio.</p></div></div><div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5"><p className="text-sm leading-7 text-zinc-300">Klik "Mulai Chat" di panel Asisten AI untuk bertanya tentang ide musik, lirik, genre, vokal, kredit, Library, atau cara menggunakan aplikasi.</p><button onClick={() => setChatOpen(true)} className="mt-4 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-500 px-5 py-3 text-sm font-black"><MessageCircle size={16} className="mr-2 inline"/>Mulai Chat</button></div></section>}
             {active === "library" && <section className="rounded-[30px] border border-white/10 bg-[#090a13]/95 p-5 sm:p-8"><div className="flex items-center justify-between"><div><h2 className="text-3xl font-black">Library Musik</h2><p className="mt-1 text-sm text-zinc-500">Semua karya dari akun Anda.</p></div><button onClick={() => void loadLibrary()} className="rounded-xl border border-white/10 px-4 py-2 text-xs">Refresh</button></div><div className="mt-6 space-y-3">{projects.length ? projects.map(p => <div key={p.id} className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 sm:flex-row sm:items-center"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-violet-500/10"><Music2 size={21} className="text-violet-300"/></div><div className="min-w-0 flex-1"><div className="truncate font-bold">{p.title}</div><div className="mt-1 text-[11px] text-zinc-500">{p.model} · {p.status}</div></div>{p.audio && <button onClick={() => togglePlay(p.audio!)} className="rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold">{playing === p.audio ? <Pause size={15}/> : <Play size={15}/>}</button>}{p.audio && <a href={p.audio} target="_blank" rel="noreferrer" className="rounded-xl border border-white/10 p-2"><Download size={16}/></a>}</div>) : <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-sm text-zinc-500">Belum ada project. Buat musik pertama Anda dari Studio.</div>}</div></section>}
             {(active === "models" || active === "style" || active === "voice" || active === "reference") && <section className="rounded-[30px] border border-white/10 bg-[#090a13]/95 p-5 sm:p-8"><h2 className="text-3xl font-black">{nav.find(x => x[0] === active)?.[1]}</h2><p className="mt-2 text-sm text-zinc-500">Semua kontrol utama sudah tersedia di Studio. Gunakan panel ini untuk kembali ke workspace utama.</p><button onClick={() => setActive("studio")} className="mt-6 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-500 px-5 py-3 text-sm font-black">Buka Studio</button></section>}
-            {active === "monetize" && <section className="rounded-[30px] border border-fuchsia-400/20 bg-gradient-to-br from-[#170d25] to-[#080811] p-5 sm:p-8"><div className="flex items-center gap-3"><Crown className="text-amber-300"/><div><h2 className="text-3xl font-black">Monetisasi & Kredit</h2><p className="text-sm text-zinc-500">Akun induk SALVIAN AI CREATOR mengelola saldo dan pembelian kredit.</p></div></div><div className="mt-6 grid gap-4 md:grid-cols-3"><div className="rounded-2xl border border-white/10 bg-black/20 p-5"><div className="text-xs text-zinc-500">Saldo saat ini</div><div className="mt-2 text-4xl font-black text-violet-300">{credits ?? 0}</div><div className="text-xs text-zinc-500">kredit pusat</div></div><div className="rounded-2xl border border-violet-400/20 bg-violet-500/10 p-5"><div className="font-black">Pro</div><p className="mt-2 text-xs text-zinc-400">Kualitas tinggi untuk creator aktif.</p></div><div className="rounded-2xl border border-fuchsia-400/25 bg-fuchsia-500/10 p-5"><div className="font-black">Adroit</div><p className="mt-2 text-xs text-zinc-400">Model paling elite untuk karya utama.</p></div></div><div className="mt-6 rounded-2xl border border-amber-400/15 bg-amber-400/5 p-5 text-sm text-zinc-300"><b>Catatan penting:</b> pembelian/top-up kredit tetap dilakukan melalui SALVIAN AI CREATOR sebagai akun induk. SALVIAN AI MUSIC hanya memakai saldo pusat yang sama.</div></section>}
-            {active === "account" && <section className="rounded-[30px] border border-white/10 bg-[#090a13]/95 p-5 sm:p-8"><div className="flex items-center gap-4"><div className="grid h-16 w-16 place-items-center rounded-2xl bg-violet-500/10"><UserRound size={30} className="text-violet-300"/></div><div><h2 className="text-2xl font-black">{userName || "Akun SALVIAN AI"}</h2><p className="text-sm text-zinc-500">Akun induk · {plan} · {credits ?? 0} kredit</p></div></div>{!token && <button onClick={() => { void syncSession(); }} className="mt-6 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-500 px-5 py-3 text-sm font-black"><LogIn size={16} className="mr-2 inline"/>Cek / Masuk Akun</button>}<div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5 text-sm text-zinc-400">Gunakan akun SALVIAN AI CREATOR sebagai akun induk. Kredit, paket, dan Library terhubung ke akun yang sama.</div></section>}
+            {active === "monetize" && <section className="rounded-[30px] border border-fuchsia-400/20 bg-gradient-to-br from-[#170d25] to-[#080811] p-5 sm:p-8"><div className="flex items-center gap-3"><Crown className="text-amber-300"/><div><h2 className="text-3xl font-black">Monetisasi & Kredit</h2><p className="text-sm text-zinc-500">Akun induk SALVIAN AI CREATOR mengelola saldo dan pembelian kredit.</p></div></div><div className="mt-6 grid gap-4 md:grid-cols-3"><div className="rounded-2xl border border-white/10 bg-black/20 p-5"><div className="text-xs text-zinc-500">Saldo saat ini</div><div className="mt-2 text-4xl font-black text-violet-300">{credits === null ? "…" : credits}</div><div className="text-xs text-zinc-500">kredit pusat</div></div><div className="rounded-2xl border border-violet-400/20 bg-violet-500/10 p-5"><div className="font-black">Pro</div><p className="mt-2 text-xs text-zinc-400">Kualitas tinggi untuk creator aktif.</p></div><div className="rounded-2xl border border-fuchsia-400/25 bg-fuchsia-500/10 p-5"><div className="font-black">Adroit</div><p className="mt-2 text-xs text-zinc-400">Model paling elite untuk karya utama.</p></div></div><div className="mt-6 rounded-2xl border border-amber-400/15 bg-amber-400/5 p-5 text-sm text-zinc-300"><b>Catatan penting:</b> pembelian/top-up kredit tetap dilakukan melalui SALVIAN AI CREATOR sebagai akun induk. SALVIAN AI MUSIC hanya memakai saldo pusat yang sama.</div></section>}
+            {active === "account" && <section className="rounded-[30px] border border-white/10 bg-[#090a13]/95 p-5 sm:p-8"><div className="flex items-center gap-4"><img src="/salvian-ai-logo.svg" alt="SALVIAN AI" className="h-16 w-16 rounded-2xl"/><div><h2 className="text-2xl font-black">{userName || "Akun SALVIAN AI"}</h2><p className="text-sm text-zinc-500">Akun induk · {plan} · {credits === null ? "…" : credits} kredit</p></div></div>{!token && <button onClick={() => { void syncSession(); }} className="mt-6 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-500 px-5 py-3 text-sm font-black"><LogIn size={16} className="mr-2 inline"/>Cek / Masuk Akun</button>}{token && <div className="mt-6 rounded-2xl border border-emerald-400/20 bg-emerald-500/5 p-4 text-sm text-emerald-200">✓ Akun induk aktif dan saldo kredit tersambung.</div>}<div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5 text-sm text-zinc-400">Gunakan akun SALVIAN AI CREATOR sebagai akun induk. Kredit, paket, dan Library terhubung ke akun yang sama.</div></section>}
           </div>
         </main>
 
