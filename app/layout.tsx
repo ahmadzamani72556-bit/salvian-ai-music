@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import GenerationMonitorV3 from "../components/generation-monitor-v3";
 
@@ -11,6 +11,13 @@ export const metadata: Metadata = {
     shortcut: "/salvian-logo.svg",
     apple: "/salvian-logo.svg",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#7c3aed",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
