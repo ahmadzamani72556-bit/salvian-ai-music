@@ -19,6 +19,10 @@ for (const file of targets) {
   source = source.replace(/getJWTToken\?\.\(\)/g, "getJWTToken?.(false)");
   source = source.replace(/getJWTToken\(\)/g, "getJWTToken(false)");
 
+  // Optional chaining can return undefined. Normalize it to null so the
+  // explicitly typed Music JWT variable remains type-safe during next build.
+  source = source.replace(/jwt = await auth\.getJWTToken\?\.\(false\);/g, "jwt = (await auth.getJWTToken?.(false)) ?? null;");
+
   fs.writeFileSync(file, source);
 }
 
