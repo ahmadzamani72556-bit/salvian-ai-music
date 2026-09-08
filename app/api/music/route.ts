@@ -28,42 +28,17 @@ function findTaskId(value: unknown): string | null {
   return null;
 }
 function findStatus(value: unknown): string { if (!value || typeof value !== "object") return "unknown"; const obj = value as Record<string, unknown>; for (const key of ["status", "state", "task_status", "taskStatus"]) if (obj[key] !== undefined && obj[key] !== null) return String(obj[key]).toLowerCase(); return "unknown"; }
-
-function getUserId(auth: string): string | null {
-  try {
-    const raw = auth.replace(/^Bearer\s+/i, "").trim();
-    const parts = raw.split(".");
-    if (parts.length < 2) return null;
-    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
-    const decoded = Buffer.from(padded, "base64").toString("utf8");
-    const claims = JSON.parse(decoded) as Record<string, unknown>;
-    const sub = typeof claims.sub === "string" ? claims.sub.trim() : "";
-    return sub || null;
-  } catch { return null; }
-}
+function isFinished(status: string) { return ["success", "succeeded", "completed", "complete", "done", "failed", "failure", "error", "cancelled", "canceled"].some(v => status.toLowerCase().includes(v)); }
 
 async function neonRpc(auth: string, functionName: string, body: Record<string, unknown> = {}) {
-  const response = await fetch(`${DATA_API}/rpc/${functionName}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store"
-  });
+  const response = await fetch(`${DATA_API}/rpc/${functionName}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json" }, body: JSON.stringify(body), cache: "no-store" });
   const data = await response.json().catch(() => null);
   return { response, data };
 }
 async function getCredits(auth: string) { return neonRpc(auth, "salvian_get_my_credits"); }
 async function consumeCredits(auth: string) { return neonRpc(auth, "salvian_consume_credits", { p_amount: MUSIC_CREDIT_COST, p_type: "USAGE", p_description: "Pembuatan lagu SALVIAN AI MUSIC" }); }
 async function refundCredits(auth: string) { return neonRpc(auth, "salvian_refund_credits", { p_amount: MUSIC_CREDIT_COST, p_description: "Refund pembuatan lagu SALVIAN AI MUSIC" }); }
-async function libraryRequest(auth: string, method: "POST" | "PATCH", body: Record<string, unknown>, query = "") {
-  return fetch(`${DATA_API}/salvian_music_projects${query}`, {
-    method,
-    headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" },
-    body: JSON.stringify(body),
-    cache: "no-store"
-  });
-}
+async function createLibraryProject(auth: string, body: Record<string, unknown>) { return neonRpc(auth, "salvian_create_music_project", body); }
 
 export async function POST(request: NextRequest) {
   const auth = request.headers.get("authorization");
@@ -72,7 +47,6 @@ export async function POST(request: NextRequest) {
 
   try {
     if (!auth || !/^Bearer\s+/i.test(auth)) return NextResponse.json({ success: false, error: "Silakan login melalui Akun SALVIAN AI CREATOR terlebih dahulu." }, { status: 401 });
-    const userId = getUserId(auth);
 
     if (action === "balance") {
       const credit = await getCredits(auth);
@@ -91,10 +65,14 @@ export async function POST(request: NextRequest) {
       if (!response.ok) return NextResponse.json({ success: false, error: `Mureka Query ${response.status}`, data }, { status: response.status });
       const audio = findAudio(data);
       const status = findStatus(data);
+      const finished = Boolean(audio) || isFinished(status);
       try {
-        await libraryRequest(auth, "PATCH", { status, audio_url: audio, updated_at: new Date().toISOString(), provider_data: data }, `?task_id=eq.${encodeURIComponent(String(taskId))}${userId ? `&user_id=eq.${encodeURIComponent(userId)}` : ""}`);
+        const patchUrl = `${DATA_API}/salvian_music_projects?task_id=eq.${encodeURIComponent(String(taskId))}`;
+        await fetch(patchUrl, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status, audio_url: audio, updated_at: new Date().toISOString(), provider_data: data }), cache: "no-store" });
       } catch (libraryError) { console.error("MUSIC LIBRARY STATUS ERROR", libraryError); }
-      return NextResponse.json({ success: true, taskId: String(taskId), status, audio, url: audio, data });
+      const result = NextResponse.json({ success: true, taskId: String(taskId), status, audio, url: audio, finished, data });
+      if (finished) result.cookies.set("salvian_generation_task", "", { path: "/", maxAge: 0 });
+      return result;
     }
 
     const lyrics = String(body?.lyrics || "").trim();
@@ -129,19 +107,17 @@ export async function POST(request: NextRequest) {
       const audio = findAudio(data);
       const status = findStatus(data);
       let librarySaved = false;
-      try {
-        const libraryBody: Record<string, unknown> = {
-          title: String(body?.title || "Salvian AI Song").slice(0, 160), lyrics, style,
-          model: String(body?.model || "auto").slice(0, 80), task_id: taskId, status,
-          audio_url: audio, provider_data: data, updated_at: new Date().toISOString()
-        };
-        if (userId) libraryBody.user_id = userId;
-        const libraryResponse = await libraryRequest(auth, "POST", libraryBody);
-        librarySaved = libraryResponse.ok;
-        if (!libraryResponse.ok) console.error("MUSIC LIBRARY SAVE", await libraryResponse.text().catch(() => ""));
-      } catch (libraryError) { console.error("MUSIC LIBRARY SAVE ERROR", libraryError); }
+      if (taskId) {
+        try {
+          const saved = await createLibraryProject(auth, { p_title: String(body?.title || "Salvian AI Song").slice(0, 160), p_lyrics: lyrics, p_style: style, p_model: String(body?.model || "auto").slice(0, 80), p_task_id: taskId, p_status: status, p_audio_url: audio, p_provider_data: data });
+          librarySaved = saved.response.ok;
+          if (!saved.response.ok) console.error("MUSIC LIBRARY SAVE", saved.data);
+        } catch (libraryError) { console.error("MUSIC LIBRARY SAVE ERROR", libraryError); }
+      }
 
-      return NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), librarySaved, data });
+      const result = NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), librarySaved, data });
+      if (taskId && !audio && !isFinished(status)) result.cookies.set("salvian_generation_task", String(taskId), { path: "/", maxAge: 1800, sameSite: "lax" });
+      return result;
     } finally {
       if (!providerSucceeded) { try { await refundCredits(auth); } catch (refundError) { console.error("MUSIC CREDIT REFUND ERROR", refundError); } }
     }
