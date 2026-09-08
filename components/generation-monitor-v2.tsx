@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { LoaderCircle, Music2, CheckCircle2, AlertTriangle, Clock3 } from "lucide-react";
 import { createClient } from "@neondatabase/neon-js";
 
-const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
+const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
 const DATA = "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
 const neon = createClient({ auth: { url: AUTH }, dataApi: { url: DATA } });
 const TERMINAL = ["succeeded", "success", "completed", "complete", "done", "failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled"];
@@ -44,7 +44,8 @@ export default function GenerationMonitorV2() {
   const [isFailed, setIsFailed] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const active = useRef<MusicState | null>(null);
+  const active = useState<MusicState | null>(null)[0];
+  const [activeState, setActiveState] = useState<MusicState | null>(null);
 
   useEffect(() => {
     let stopped = false;
@@ -52,11 +53,13 @@ export default function GenerationMonitorV2() {
     let clockTimer: number | null = null;
     let hideTimer: number | null = null;
     const originalFetch = window.fetch.bind(window);
+    let current: MusicState | null = null;
 
     const start = (id: string, createdAt = 0) => {
       if (!id || stopped) return;
       const startMs = createdAt > 0 ? createdAt : Date.now();
-      active.current = { id, status: "preparing", startedAt: startMs, done: false, failed: false };
+      current = { id, status: "preparing", startedAt: startMs, done: false, failed: false };
+      setActiveState(current);
       setCookie("salvian_generation_task", id);
       setTaskId(id);
       setStatus("preparing");
@@ -78,7 +81,7 @@ export default function GenerationMonitorV2() {
 
     const check = async () => {
       if (stopped) return;
-      const id = active.current?.id || getCookie("salvian_generation_task");
+      const id = current?.id || getCookie("salvian_generation_task");
       if (!id) return;
       const jwt = await token();
       if (!jwt || stopped) return;
@@ -94,9 +97,10 @@ export default function GenerationMonitorV2() {
         const next = String(data.status || "preparing");
         const bad = Boolean(data.failed) || failed(next);
         const created = Number(data.createdAt || 0) * 1000;
-        const currentStart = created > 0 ? created : (active.current?.startedAt || Date.now());
-        if (!active.current || active.current.id !== id) start(id, currentStart);
-        active.current = { id, status: next, startedAt: currentStart, done: Boolean(data.finished) && !bad, failed: bad, audio: data.audio || null };
+        const currentStart = created > 0 ? created : (current?.startedAt || Date.now());
+        if (!current || current.id !== id) start(id, currentStart);
+        current = { id, status: next, startedAt: currentStart, done: Boolean(data.finished) && !bad, failed: bad, audio: data.audio || null };
+        setActiveState(current);
         setStatus(next);
         setIsFailed(bad);
         setStartedAt(currentStart);
@@ -108,8 +112,9 @@ export default function GenerationMonitorV2() {
           window.dispatchEvent(new CustomEvent("salvian-generation-complete", { detail: { taskId: id, failed: bad, audio: data.audio || null } }));
           if (hideTimer) window.clearTimeout(hideTimer);
           hideTimer = window.setTimeout(() => {
-            if (!stopped && active.current?.id === id) {
-              active.current = null;
+            if (!stopped && current?.id === id) {
+              current = null;
+              setActiveState(null);
               setTaskId("");
             }
           }, 15000);
@@ -155,7 +160,7 @@ export default function GenerationMonitorV2() {
     void check();
     pollTimer = window.setInterval(() => void check(), 5000);
     clockTimer = window.setInterval(() => {
-      if (!stopped && startedAt !== null) setElapsed(Math.max(0, (Date.now() - startedAt) / 1000));
+      if (!stopped && current?.startedAt) setElapsed(Math.max(0, (Date.now() - current.startedAt) / 1000));
     }, 1000);
 
     return () => {
