@@ -77,6 +77,14 @@ async function rpc(auth: string, fn: string, body: Record<string, unknown> = {})
   return { response, data: await response.json().catch(() => null) };
 }
 
+async function consume(auth: string) {
+  return rpc(auth, "salvian_consume_credits", {
+    p_amount: MUSIC_CREDIT_COST,
+    p_type: "USAGE",
+    p_description: "Pembuatan lagu SALVIAN AI MUSIC",
+  });
+}
+
 async function provider(path: string, init: RequestInit = {}) {
   if (!MUREKA_API_KEY) throw new Error("MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di Vercel SALVIAN AI MUSIC.");
   const response = await fetch(`${MUREKA_BASE_URL}${path}`, { ...init, headers: { Authorization: `Bearer ${MUREKA_API_KEY}`, Accept: "application/json", ...(init.headers || {}) }, cache: "no-store" });
@@ -192,9 +200,6 @@ export async function POST(request: NextRequest) {
       if (!providerAccepted) {
         try { await refund(auth); } catch (e) { console.error("MUSIC CREDIT REFUND ERROR", e); }
       } else if (shouldRefundTerminalFailure && terminalTaskId) {
-        // Terminal failures are refunded through the same idempotent project
-        // update used by the polling monitor. This prevents an immediate failure
-        // from being refunded once here and again on the next status poll.
         try {
           const patched = await patchProject(auth, terminalTaskId, terminalStatus, terminalAudio, terminalProviderData);
           if (!patched) console.error("MUSIC TERMINAL REFUND DEFERRED: project not found");
