@@ -166,6 +166,7 @@ export async function POST(request: NextRequest) {
     if (!credit.response.ok || creditRow?.success !== true) return NextResponse.json({ success: false, error: creditRow?.message || "Kredit tidak cukup.", credits: Number(creditRow?.balance || 0) }, { status: credit.response.status === 402 ? 402 : 503 });
 
     let providerSucceeded = false;
+    let shouldRefund = false;
     try {
       const requested = String(body?.model || "auto");
       const model = MODELS.has(requested) ? requested : "auto";
@@ -181,7 +182,9 @@ export async function POST(request: NextRequest) {
       providerSucceeded = true;
 
       const s = status(generated.data);
-      const a = terminal(s) && !failure(s) ? audio(generated.data) : null;
+      const bad = failure(s);
+      const a = terminal(s) && !bad ? audio(generated.data) : null;
+      shouldRefund = terminal(s) && bad;
       const saved = await saveLibrary(auth, {
         title: String(body?.title || "Instrumental SALVIAN AI").slice(0, 160),
         lyrics: "[Instrumental]",
@@ -200,7 +203,7 @@ export async function POST(request: NextRequest) {
       }
       return result;
     } finally {
-      if (!providerSucceeded) {
+      if (!providerSucceeded || shouldRefund) {
         try {
           await rpc(auth, "salvian_refund_credits", { p_amount: MUSIC_CREDIT_COST, p_description: "Refund instrumental SALVIAN AI MUSIC" });
         } catch (e) {
