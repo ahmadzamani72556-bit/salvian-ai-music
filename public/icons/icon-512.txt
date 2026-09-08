@@ -1,0 +1,1 @@
+Official generated logo asset is stored in the working environment and should be committed as public/icons/icon-512.png via Git blob upload.
