@@ -123,8 +123,8 @@ export default function GenerationMonitorV2() {
 
     window.addEventListener("salvian-generation-started", onStarted);
 
-    // The music page calls /api/music directly. Intercept its response so the
-    // monitor starts immediately, without waiting for a cookie or Library refresh.
+    // The music page calls /api/music directly. Intercept only generation requests
+    // so status/balance polling cannot reset the timer.
     const patchedFetch: typeof window.fetch = async (...args) => {
       const response = await originalFetch(...args);
       try {
@@ -132,7 +132,11 @@ export default function GenerationMonitorV2() {
         const url = typeof request === "string" ? request : request instanceof Request ? request.url : "";
         const init = args[1];
         const method = (init?.method || (request instanceof Request ? request.method : "GET")).toUpperCase();
-        if (url.includes("/api/music") && method === "POST") {
+        let action = "";
+        if (typeof init?.body === "string") {
+          try { action = String((JSON.parse(init.body) as Record<string, unknown>)?.action || ""); } catch { /* not JSON */ }
+        }
+        if (url.includes("/api/music") && method === "POST" && action !== "status" && action !== "balance") {
           const clone = response.clone();
           void clone.json().then((data: Record<string, unknown>) => {
             const id = data?.taskId ? String(data.taskId) : "";
