@@ -12,26 +12,33 @@ const MUREKA_MODELS = new Set(["auto", "mureka-7.6", "mureka-o2", "mureka-8", "m
 function cleanUrl(value: unknown) { if (typeof value !== "string") return null; const s = value.trim(); return /^https?:\/\//i.test(s) ? s : null; }
 function findAudio(value: unknown, depth = 0): string | null {
   if (!value || depth > 8) return null;
-  if (typeof value === "string") return cleanUrl(value);
   if (Array.isArray(value)) { for (const item of value) { const found = findAudio(item, depth + 1); if (found) return found; } return null; }
   if (typeof value !== "object") return null;
   const obj = value as Record<string, unknown>;
-  for (const key of ["audio_url", "audioUrl", "audio", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "stream_url", "streamUrl", "url"]) {
+  // Only inspect fields that can actually contain generated audio.
+  for (const key of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl"]) {
     const found = cleanUrl(obj[key]);
     if (found) return found;
   }
-  for (const child of Object.values(obj)) { const found = findAudio(child, depth + 1); if (found) return found; }
+  // Mureka returns generated songs under choices[]. Never treat arbitrary URLs
+  // such as trace/provider URLs as an audio result.
+  for (const key of ["choices", "songs", "outputs", "results"]) {
+    if (obj[key]) { const found = findAudio(obj[key], depth + 1); if (found) return found; }
+  }
   return null;
 }
 function findTaskId(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   if (Array.isArray(value)) { for (const item of value) { const found = findTaskId(item); if (found) return found; } return null; }
   const obj = value as Record<string, unknown>;
-  for (const key of ["id", "task_id", "taskId", "job_id", "jobId", "request_id", "requestId"]) if (obj[key] !== undefined && obj[key] !== null && String(obj[key]).trim()) return String(obj[key]).trim();
+  // For /song/generate the top-level id is the asynchronous task ID.
+  for (const key of ["id", "task_id", "taskId"]) if (obj[key] !== undefined && obj[key] !== null && String(obj[key]).trim()) return String(obj[key]).trim();
+  for (const key of ["task", "data"]) if (obj[key]) { const found = findTaskId(obj[key]); if (found) return found; }
   return null;
 }
-function findStatus(value: unknown): string { if (!value || typeof value !== "object") return "unknown"; const obj = value as Record<string, unknown>; for (const key of ["status", "state", "task_status", "taskStatus"]) if (obj[key] !== undefined && obj[key] !== null) return String(obj[key]).toLowerCase(); return "unknown"; }
-function isFinished(status: string) { return ["success", "succeeded", "completed", "complete", "done", "failed", "failure", "error", "timeout", "timedout", "timed_out", "cancelled", "canceled"].some(v => status.toLowerCase().includes(v)); }
+function findStatus(value: unknown): string { if (!value || typeof value !== "object") return "preparing"; const obj = value as Record<string, unknown>; for (const key of ["status", "state", "task_status", "taskStatus"]) if (obj[key] !== undefined && obj[key] !== null) return String(obj[key]).toLowerCase(); return "preparing"; }
+function isFinished(status: string) { return ["succeeded", "success", "completed", "complete", "done", "failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled"].some(v => status.toLowerCase() === v || status.toLowerCase().includes(v)); }
+function isFailure(status: string) { return ["failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"].some(v => status.toLowerCase() === v || status.toLowerCase().includes(v)); }
 function decodeJwtSubject(auth: string): string | null {
   try {
     const token = auth.replace(/^Bearer\s+/i, "").split(".")[1];
@@ -55,34 +62,16 @@ async function refundCredits(auth: string) { return neonRpc(auth, "salvian_refun
 async function createLibraryProject(auth: string, body: Record<string, unknown>) {
   const userId = decodeJwtSubject(auth);
   if (userId) {
-    const insertBody = {
-      user_id: userId,
-      title: body.p_title,
-      lyrics: body.p_lyrics,
-      style: body.p_style || "",
-      model: body.p_model || "v5.5 Pro",
-      task_id: body.p_task_id || null,
-      status: body.p_status || "processing",
-      audio_url: body.p_audio_url || null,
-      provider_data: body.p_provider_data || null,
-      updated_at: new Date().toISOString()
-    };
-    const direct = await fetch(`${DATA_API}/salvian_music_projects`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" },
-      body: JSON.stringify(insertBody),
-      cache: "no-store"
-    });
+    const insertBody = { user_id: userId, title: body.p_title, lyrics: body.p_lyrics, style: body.p_style || "", model: body.p_model || "v5.5 Pro", task_id: body.p_task_id || null, status: body.p_status || "preparing", audio_url: body.p_audio_url || null, provider_data: body.p_provider_data || null, updated_at: new Date().toISOString() };
+    const direct = await fetch(`${DATA_API}/salvian_music_projects`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" }, body: JSON.stringify(insertBody), cache: "no-store" });
     const directData = await direct.json().catch(() => null);
     if (direct.ok) return { response: direct, data: directData };
     console.error("MUSIC LIBRARY DIRECT INSERT", direct.status, directData);
   }
-
   const fallback = await neonRpc(auth, "salvian_create_music_project", body);
   if (!fallback.response.ok) console.error("MUSIC LIBRARY RPC INSERT", fallback.response.status, fallback.data);
   return fallback;
 }
-
 async function patchLibraryProject(auth: string, taskId: string, status: string, audio: string | null, data: unknown) {
   const patchUrl = `${DATA_API}/salvian_music_projects?task_id=eq.${encodeURIComponent(taskId)}`;
   return fetch(patchUrl, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status, audio_url: audio, updated_at: new Date().toISOString(), provider_data: data }), cache: "no-store" });
@@ -92,7 +81,6 @@ export async function POST(request: NextRequest) {
   const auth = request.headers.get("authorization");
   const body = await request.json().catch(() => ({}));
   const action = body?.action || "generate";
-
   try {
     if (!auth || !/^Bearer\s+/i.test(auth)) return NextResponse.json({ success: false, error: "Silakan login melalui Akun SALVIAN AI CREATOR terlebih dahulu." }, { status: 401 });
 
@@ -111,16 +99,15 @@ export async function POST(request: NextRequest) {
       const response = await fetch(`${BASE_URL}/v1/song/query/${encodeURIComponent(String(taskId))}`, { headers: { Authorization: `Bearer ${API_KEY}`, Accept: "application/json" }, cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) return NextResponse.json({ success: false, error: `Mureka Query ${response.status}`, data }, { status: response.status });
-      const audio = findAudio(data);
       const status = findStatus(data);
-      const finished = Boolean(audio) || isFinished(status);
+      const terminal = isFinished(status);
+      const audio = terminal && !isFailure(status) ? findAudio(data) : null;
       try {
         const patch = await patchLibraryProject(auth, String(taskId), status, audio, data);
         if (!patch.ok) console.error("MUSIC LIBRARY STATUS ERROR", patch.status, await patch.text().catch(() => ""));
       } catch (libraryError) { console.error("MUSIC LIBRARY STATUS ERROR", libraryError); }
-
-      const result = NextResponse.json({ success: true, taskId: String(taskId), status, audio, url: audio, finished, failed: ["failed", "failure", "error", "timeout", "timedout", "timed_out", "cancelled", "canceled"].some(v => status.includes(v)), data });
-      if (finished) result.cookies.set("salvian_generation_task", "", { path: "/", maxAge: 0 });
+      const result = NextResponse.json({ success: true, taskId: String(taskId), status, audio, url: audio, finished: terminal, failed: isFailure(status), createdAt: Number(data?.created_at || 0), finishedAt: Number(data?.finished_at || 0), failedReason: data?.failed_reason || null, data });
+      if (terminal) result.cookies.set("salvian_generation_task", "", { path: "/", maxAge: 0 });
       return result;
     }
 
@@ -150,11 +137,10 @@ export async function POST(request: NextRequest) {
         const providerMessage = data?.error?.message || data?.message || data?.error || `Mureka API ${response.status}`;
         return NextResponse.json({ success: false, error: `Mureka API ${response.status}: ${String(providerMessage)}`, data }, { status: response.status });
       }
-
       providerSucceeded = true;
       const taskId = findTaskId(data);
-      const audio = findAudio(data);
       const status = findStatus(data);
+      const audio = isFinished(status) && !isFailure(status) ? findAudio(data) : null;
       let librarySaved = false;
       let libraryError = "";
       if (taskId) {
@@ -163,12 +149,10 @@ export async function POST(request: NextRequest) {
           librarySaved = saved.response.ok;
           if (!librarySaved) libraryError = `Library save gagal (${saved.response.status})`;
         } catch (libraryErrorCaught) { libraryError = libraryErrorCaught instanceof Error ? libraryErrorCaught.message : "Library save gagal"; console.error("MUSIC LIBRARY SAVE ERROR", libraryErrorCaught); }
-      } else {
-        libraryError = "Mureka tidak mengembalikan Task ID.";
-      }
+      } else libraryError = "Mureka tidak mengembalikan Task ID.";
 
-      const result = NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), librarySaved, libraryError, data });
-      if (taskId && !audio && !isFinished(status)) result.cookies.set("salvian_generation_task", String(taskId), { path: "/", maxAge: 1800, sameSite: "lax" });
+      const result = NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), librarySaved, libraryError, createdAt: Number(data?.created_at || 0), data });
+      if (taskId && !isFinished(status)) result.cookies.set("salvian_generation_task", String(taskId), { path: "/", maxAge: 3600, sameSite: "lax" });
       return result;
     } finally {
       if (!providerSucceeded) { try { await refundCredits(auth); } catch (refundError) { console.error("MUSIC CREDIT REFUND ERROR", refundError); } }
