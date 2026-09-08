@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from "react";
 import { MessageCircle, Send, Sparkles, X } from "lucide-react";
+import { neon } from "@neondatabase/neon-js";
+import { BetterAuthVanillaAdapter } from "@neondatabase/neon-js/auth/adapter";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -9,6 +11,14 @@ const welcome: Message = {
   role: "assistant",
   content: "Halo! Saya Asisten AI SALVIAN AI MUSIC. Saya bisa membantu soal daftar/login akun, kredit, Library, cara membuat lagu, atau masalah di aplikasi.",
 };
+
+const neonClient = neon({
+  auth: {
+    url: process.env.NEXT_PUBLIC_NEON_AUTH_URL!,
+    adapter: BetterAuthVanillaAdapter(),
+  },
+  dataApi: { url: process.env.NEXT_PUBLIC_NEON_DATA_API_URL! },
+});
 
 export default function AiAssistant() {
   const [open, setOpen] = useState(false);
@@ -27,9 +37,12 @@ export default function AiAssistant() {
     setBusy(true);
 
     try {
+      const token = await neonClient.auth.getJWTToken();
+      if (!token) throw new Error("Silakan masuk melalui Akun SALVIAN AI CREATOR terlebih dahulu.");
+
       const res = await fetch("/api/assistant", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ message, history }),
       });
       const data = await res.json().catch(() => ({}));
