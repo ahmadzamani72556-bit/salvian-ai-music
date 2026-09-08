@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import AiAssistant from "../components/ai-assistant";
 
 export const metadata: Metadata = {
   title: "SALVIAN AI MUSIC",
@@ -9,7 +10,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="id">
-      <body>{children}</body>
+      <body>{children}<AiAssistant /></body>
     </html>
   );
 }
