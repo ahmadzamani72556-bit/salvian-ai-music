@@ -1,0 +1,1 @@
+The official SALVIAN AI MUSIC logo is the application identity. PNG icon assets are intended for the web app manifest and installed app icon.
