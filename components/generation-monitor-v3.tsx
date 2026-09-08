@@ -95,17 +95,26 @@ export default function GenerationMonitorV3() {
       void check();
     };
 
-    const onPointer = (event: Event) => {
-      const target = event.target as HTMLElement | null;
-      const button = target?.closest("button");
-      if (!button) return;
-      const text = (button.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
-      if (text.includes("buat lagu")) startPending();
+    const isGenerateButton = (target: EventTarget | null) => {
+      const element = target instanceof HTMLElement ? target : null;
+      const button = element?.closest("button");
+      if (!button) return false;
+      const text = `${button.textContent || ""} ${button.getAttribute("aria-label") || ""} ${button.getAttribute("title") || ""}`.replace(/\s+/g, " ").trim().toLowerCase();
+      return text.includes("buat lagu") || text.includes("buatkan lagu") || text.includes("generate song");
+    };
+
+    const onPointer = (event: Event) => { if (isGenerateButton(event.target)) startPending(); };
+    const onSubmit = (event: Event) => {
+      const form = event.target instanceof HTMLFormElement ? event.target : null;
+      if (!form) return;
+      const text = (form.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+      if (text.includes("buat lagu") || text.includes("buatkan lagu")) startPending();
     };
 
     window.addEventListener("salvian-generation-started", onStart);
     document.addEventListener("pointerdown", onPointer, true);
     document.addEventListener("click", onPointer, true);
+    document.addEventListener("submit", onSubmit, true);
 
     const patchedFetch: typeof window.fetch = async (...args) => {
       const request = args[0]; const init = args[1];
@@ -138,9 +147,7 @@ export default function GenerationMonitorV3() {
       if (!stopped && current?.startedAt) {
         const seconds = Math.max(0, (Date.now() - current.startedAt) / 1000);
         setElapsed(seconds);
-        // Local controller: if the provider has not completed after 15 minutes,
-        // stop presenting it as an active generation and surface a timeout state.
-        if (seconds >= CONTROL_LIMIT_SECONDS && current.id !== "pending" && !done && !failed) {
+        if (seconds >= CONTROL_LIMIT_SECONDS && current.id !== "pending") {
           setFailed(true); setStatus("timeout"); clearCookie("salvian_generation_task");
         }
       }
@@ -149,11 +156,13 @@ export default function GenerationMonitorV3() {
     return () => {
       stopped = true;
       window.removeEventListener("salvian-generation-started", onStart);
-      document.removeEventListener("pointerdown", onPointer, true); document.removeEventListener("click", onPointer, true);
+      document.removeEventListener("pointerdown", onPointer, true);
+      document.removeEventListener("click", onPointer, true);
+      document.removeEventListener("submit", onSubmit, true);
       if (pollTimer) window.clearInterval(pollTimer); if (clockTimer) window.clearInterval(clockTimer); if (hideTimer) window.clearTimeout(hideTimer);
       window.fetch = originalFetch;
     };
-  }, [done, failed]);
+  }, []);
 
   if (!taskId) return null;
   const pending = taskId === "pending";
