@@ -3,8 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const BASE_URL = process.env.MUREKA_BASE_URL || "https://api.mureka.ai";
-const API_KEY = process.env.MUREKA_API_KEY || process.env.MUSIC_API_KEY;
+// SALVIAN AI MUSIC is the UI/client layer. The canonical music engine stays
+// in SALVIAN AI CREATOR and that engine talks to Mureka.
+const CREATOR_MUSIC_API = process.env.SALVIAN_CREATOR_MUSIC_API_URL || "https://salvian-ai-creator.vercel.app/api/music";
 const DATA_API = process.env.NEON_DATA_API_URL || "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
 const MUSIC_CREDIT_COST = Math.max(1, Number(process.env.SALVIAN_MUSIC_CREDIT_COST || 100));
 const MUREKA_MODELS = new Set(["auto", "mureka-7.6", "mureka-o2", "mureka-8", "mureka-9", "mureka-9.5"]);
@@ -15,46 +16,31 @@ function findAudio(value: unknown, depth = 0): string | null {
   if (Array.isArray(value)) { for (const item of value) { const found = findAudio(item, depth + 1); if (found) return found; } return null; }
   if (typeof value !== "object") return null;
   const obj = value as Record<string, unknown>;
-  for (const key of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl"]) {
-    const found = cleanUrl(obj[key]);
-    if (found) return found;
-  }
-  for (const key of ["choices", "songs", "outputs", "results"]) {
-    if (obj[key]) { const found = findAudio(obj[key], depth + 1); if (found) return found; }
-  }
+  for (const key of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "url"]) { const found = cleanUrl(obj[key]); if (found) return found; }
+  for (const key of ["audio", "choices", "songs", "outputs", "results", "data"]) { if (obj[key]) { const found = findAudio(obj[key], depth + 1); if (found) return found; } }
   return null;
 }
 function findTaskId(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   if (Array.isArray(value)) { for (const item of value) { const found = findTaskId(item); if (found) return found; } return null; }
   const obj = value as Record<string, unknown>;
-  for (const key of ["id", "task_id", "taskId"]) if (obj[key] !== undefined && obj[key] !== null && String(obj[key]).trim()) return String(obj[key]).trim();
+  for (const key of ["id", "task_id", "taskId", "job_id", "jobId"]) if (obj[key] !== undefined && obj[key] !== null && String(obj[key]).trim()) return String(obj[key]).trim();
   for (const key of ["task", "data", "result"]) if (obj[key]) { const found = findTaskId(obj[key]); if (found) return found; }
   return null;
 }
 function findStatus(value: unknown): string { if (!value || typeof value !== "object") return "preparing"; const obj = value as Record<string, unknown>; for (const key of ["status", "state", "task_status", "taskStatus"]) if (obj[key] !== undefined && obj[key] !== null) return String(obj[key]).toLowerCase(); return "preparing"; }
-function isFinished(status: string) { return ["succeeded", "success", "completed", "complete", "done", "failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled"].some(v => status.toLowerCase() === v || status.toLowerCase().includes(v)); }
-function isFailure(status: string) { return ["failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"].some(v => status.toLowerCase() === v || status.toLowerCase().includes(v)); }
+function isFinished(status: string) { const s = status.toLowerCase(); return ["succeeded", "success", "completed", "complete", "done", "failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"].some(v => s === v || s.includes(v)); }
+function isFailure(status: string) { const s = status.toLowerCase(); return ["failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"].some(v => s === v || s.includes(v)); }
 function decodeJwtSubject(auth: string): string | null {
-  try {
-    const token = auth.replace(/^Bearer\s+/i, "").split(".")[1];
-    if (!token) return null;
-    const normalized = token.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(token.length / 4) * 4, "=");
-    const payload = JSON.parse(Buffer.from(normalized, "base64").toString("utf8"));
-    const sub = payload?.sub;
-    return typeof sub === "string" && sub.trim() ? sub.trim() : null;
-  } catch { return null; }
+  try { const token = auth.replace(/^Bearer\s+/i, "").split(".")[1]; if (!token) return null; const normalized = token.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(token.length / 4) * 4, "="); const payload = JSON.parse(Buffer.from(normalized, "base64").toString("utf8")); const sub = payload?.sub; return typeof sub === "string" && sub.trim() ? sub.trim() : null; } catch { return null; }
 }
-
 async function neonRpc(auth: string, functionName: string, body: Record<string, unknown> = {}) {
   const response = await fetch(`${DATA_API}/rpc/${functionName}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json" }, body: JSON.stringify(body), cache: "no-store" });
-  const data = await response.json().catch(() => null);
-  return { response, data };
+  const data = await response.json().catch(() => null); return { response, data };
 }
 async function getCredits(auth: string) { return neonRpc(auth, "salvian_get_my_credits"); }
 async function consumeCredits(auth: string) { return neonRpc(auth, "salvian_consume_credits", { p_amount: MUSIC_CREDIT_COST, p_type: "USAGE", p_description: "Pembuatan lagu SALVIAN AI MUSIC" }); }
 async function refundCredits(auth: string) { return neonRpc(auth, "salvian_refund_credits", { p_amount: MUSIC_CREDIT_COST, p_description: "Refund pembuatan lagu SALVIAN AI MUSIC" }); }
-
 async function createLibraryProject(auth: string, body: Record<string, unknown>) {
   const userId = decodeJwtSubject(auth);
   if (userId) {
@@ -71,6 +57,10 @@ async function createLibraryProject(auth: string, body: Record<string, unknown>)
 async function patchLibraryProject(auth: string, taskId: string, status: string, audio: string | null, data: unknown) {
   const patchUrl = `${DATA_API}/salvian_music_projects?task_id=eq.${encodeURIComponent(taskId)}`;
   return fetch(patchUrl, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status, audio_url: audio, updated_at: new Date().toISOString(), provider_data: data }), cache: "no-store" });
+}
+async function callCreatorMusic(body: Record<string, unknown>) {
+  const response = await fetch(CREATOR_MUSIC_API, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(body), cache: "no-store" });
+  const data = await response.json().catch(() => ({})); return { response, data };
 }
 
 export async function POST(request: NextRequest) {
@@ -89,72 +79,53 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "status") {
-      if (!API_KEY) return NextResponse.json({ success: false, error: "MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di deployment." }, { status: 503 });
       const taskId = body?.taskId || body?.task_id || body?.id;
       if (!taskId) return NextResponse.json({ success: false, error: "Task ID belum dikirim." }, { status: 400 });
-      const response = await fetch(`${BASE_URL}/v1/song/query/${encodeURIComponent(String(taskId))}`, { headers: { Authorization: `Bearer ${API_KEY}`, Accept: "application/json" }, cache: "no-store" });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) return NextResponse.json({ success: false, error: `Mureka Query ${response.status}`, data }, { status: response.status });
-      const status = findStatus(data);
-      const terminal = isFinished(status);
-      const audio = terminal && !isFailure(status) ? findAudio(data) : null;
-      try {
-        const patch = await patchLibraryProject(auth, String(taskId), status, audio, data);
-        if (!patch.ok) console.error("MUSIC LIBRARY STATUS ERROR", patch.status, await patch.text().catch(() => ""));
-      } catch (libraryError) { console.error("MUSIC LIBRARY STATUS ERROR", libraryError); }
-      const result = NextResponse.json({ success: true, taskId: String(taskId), status, audio, url: audio, finished: terminal, failed: isFailure(status), createdAt: Number(data?.created_at || 0), finishedAt: Number(data?.finished_at || 0), failedReason: data?.failed_reason || null, data });
+      const { response, data } = await callCreatorMusic({ action: "status", taskId: String(taskId) });
+      if (!response.ok) return NextResponse.json({ success: false, taskId: String(taskId), error: data?.error || `SALVIAN AI CREATOR music engine ${response.status}`, data }, { status: response.status });
+      const status = findStatus(data); const terminal = isFinished(status); const audio = terminal && !isFailure(status) ? findAudio(data) : null;
+      try { const patch = await patchLibraryProject(auth, String(taskId), status, audio, data); if (!patch.ok) console.error("MUSIC LIBRARY STATUS ERROR", patch.status, await patch.text().catch(() => "")); } catch (libraryError) { console.error("MUSIC LIBRARY STATUS ERROR", libraryError); }
+      const result = NextResponse.json({ success: true, taskId: String(taskId), status, audio, url: audio, finished: terminal, failed: isFailure(status), createdAt: Number(data?.created_at || data?.data?.created_at || 0), finishedAt: Number(data?.finished_at || data?.data?.finished_at || 0), failedReason: data?.failed_reason || data?.data?.failed_reason || null, data });
       if (terminal) result.cookies.set("salvian_generation_task", "", { path: "/", maxAge: 0 });
       return result;
     }
 
-    const lyrics = String(body?.lyrics || "").trim();
-    const style = String(body?.style || "").trim();
+    const lyrics = String(body?.lyrics || "").trim(); const style = String(body?.style || "").trim();
     if (!lyrics && !body?.instrumental) return NextResponse.json({ success: false, error: "Lirik lagu belum diisi." }, { status: 400 });
-    if (!API_KEY) return NextResponse.json({ success: false, error: "MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di deployment." }, { status: 503 });
 
-    const credit = await consumeCredits(auth);
-    const creditRow = Array.isArray(credit.data) ? credit.data[0] : credit.data;
+    const credit = await consumeCredits(auth); const creditRow = Array.isArray(credit.data) ? credit.data[0] : credit.data;
     if (!credit.response.ok || creditRow?.success !== true) return NextResponse.json({ success: false, error: creditRow?.message || "Kredit tidak cukup.", credits: Number(creditRow?.balance || 0) }, { status: credit.response.status === 402 ? 402 : 503 });
 
     let providerSucceeded = false;
     try {
-      const requestedModel = String(body?.model || "auto").trim();
-      const providerModel = MUREKA_MODELS.has(requestedModel) ? requestedModel : "auto";
-      const payload: Record<string, unknown> = { lyrics: lyrics.slice(0, 5000), model: providerModel, n: 1, stream: false };
-      if (style) payload.prompt = style.slice(0, 1024);
-      if (body?.instrumental) payload.instrumental = true;
-      if (body?.reference_id) payload.reference_id = String(body.reference_id);
-      if (body?.vocal_id) payload.vocal_id = String(body.vocal_id);
-      if (body?.melody_id) payload.melody_id = String(body.melody_id);
+      const requestedModel = String(body?.model || "auto").trim(); const providerModel = MUREKA_MODELS.has(requestedModel) ? requestedModel : "auto";
+      const creatorPayload: Record<string, unknown> = { action: "generate", title: String(body?.title || "Salvian AI Song").slice(0, 160), lyrics: lyrics.slice(0, 5000), genre: style.slice(0, 1024), model: providerModel, n: 1, stream: false };
+      if (body?.instrumental) creatorPayload.instrumental = true;
+      if (body?.reference_id) creatorPayload.reference_id = String(body.reference_id);
+      if (body?.vocal_id) creatorPayload.vocal_id = String(body.vocal_id);
+      if (body?.melody_id) creatorPayload.melody_id = String(body.melody_id);
 
-      const response = await fetch(`${BASE_URL}/v1/song/generate`, { method: "POST", headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(payload) });
-      const data = await response.json().catch(() => ({}));
+      const { response, data } = await callCreatorMusic(creatorPayload);
       if (!response.ok) {
-        const providerMessage = data?.error?.message || data?.message || data?.error || `Mureka API ${response.status}`;
-        return NextResponse.json({ success: false, error: `Mureka API ${response.status}: ${String(providerMessage)}`, data }, { status: response.status });
+        const providerMessage = data?.error?.message || data?.message || data?.error || `SALVIAN AI CREATOR music engine ${response.status}`;
+        return NextResponse.json({ success: false, error: `SALVIAN AI CREATOR music engine ${response.status}: ${String(providerMessage)}`, data }, { status: response.status });
       }
 
-      // Mureka documents the async task ID as the top-level `id` field.
-      // Do not silently consume credits when that ID is missing: without it
-      // the app cannot poll the task or persist a recoverable Library project.
       const taskId = findTaskId(data);
       if (!taskId) {
-        console.error("MUREKA TASK ID MISSING", data);
-        return NextResponse.json({ success: false, error: "Mesin musik menerima permintaan tetapi tidak mengembalikan Task ID. Kredit akan dikembalikan.", data }, { status: 502 });
+        console.error("CREATOR MUSIC TASK ID MISSING", data);
+        return NextResponse.json({ success: false, error: "Mesin musik SALVIAN AI CREATOR menerima permintaan tetapi tidak mengembalikan Task ID. Kredit akan dikembalikan.", data }, { status: 502 });
       }
 
       providerSucceeded = true;
-      const status = findStatus(data);
-      const audio = isFinished(status) && !isFailure(status) ? findAudio(data) : null;
-      let librarySaved = false;
-      let libraryError = "";
+      const status = findStatus(data); const audio = isFinished(status) && !isFailure(status) ? findAudio(data) : null;
+      let librarySaved = false; let libraryError = "";
       try {
         const saved = await createLibraryProject(auth, { p_title: String(body?.title || "Salvian AI Song").slice(0, 160), p_lyrics: lyrics, p_style: style, p_model: String(body?.model || "auto").slice(0, 80), p_task_id: taskId, p_status: status, p_audio_url: audio, p_provider_data: data });
-        librarySaved = saved.response.ok;
-        if (!librarySaved) libraryError = `Library save gagal (${saved.response.status})`;
+        librarySaved = saved.response.ok; if (!librarySaved) libraryError = `Library save gagal (${saved.response.status})`;
       } catch (libraryErrorCaught) { libraryError = libraryErrorCaught instanceof Error ? libraryErrorCaught.message : "Library save gagal"; console.error("MUSIC LIBRARY SAVE ERROR", libraryErrorCaught); }
 
-      const result = NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), librarySaved, libraryError, createdAt: Number(data?.created_at || 0), data });
+      const result = NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), librarySaved, libraryError, createdAt: Number(data?.created_at || data?.data?.created_at || 0), data });
       if (taskId && !isFinished(status)) result.cookies.set("salvian_generation_task", String(taskId), { path: "/", maxAge: 3600, sameSite: "lax" });
       return result;
     } finally {
@@ -162,6 +133,6 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     console.error("MUSIC API ERROR", error);
-    return NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Gagal menghubungi mesin musik." }, { status: 500 });
+    return NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Gagal menghubungi mesin musik SALVIAN AI CREATOR." }, { status: 500 });
   }
 }
