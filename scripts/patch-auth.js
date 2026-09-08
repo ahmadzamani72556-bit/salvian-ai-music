@@ -19,6 +19,12 @@ s = s.replace(
 // Neon Auth exposes getJwtToken() (lowercase wt), not getJWTToken().
 s = s.replace(/getJWTToken/g, "getJwtToken");
 
+// Tell the Creator account page that it was opened from Music.
+s = s.replace(
+  'const openCreator = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html"; };',
+  'const openCreator = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html?from=music"; };'
+);
+
 if (!s.includes("const [authName, setAuthName]")) {
   s = s.replace(
     'const [authEmail, setAuthEmail] = useState("");\n  const [authPassword, setAuthPassword] = useState("");',
