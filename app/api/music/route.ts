@@ -29,6 +29,20 @@ function findTaskId(value: unknown): string | null {
 }
 function findStatus(value: unknown): string { if (!value || typeof value !== "object") return "unknown"; const obj = value as Record<string, unknown>; for (const key of ["status", "state", "task_status", "taskStatus"]) if (obj[key] !== undefined && obj[key] !== null) return String(obj[key]).toLowerCase(); return "unknown"; }
 
+function getUserId(auth: string): string | null {
+  try {
+    const raw = auth.replace(/^Bearer\s+/i, "").trim();
+    const parts = raw.split(".");
+    if (parts.length < 2) return null;
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
+    const decoded = Buffer.from(padded, "base64").toString("utf8");
+    const claims = JSON.parse(decoded) as Record<string, unknown>;
+    const sub = typeof claims.sub === "string" ? claims.sub.trim() : "";
+    return sub || null;
+  } catch { return null; }
+}
+
 async function neonRpc(auth: string, functionName: string, body: Record<string, unknown> = {}) {
   const response = await fetch(`${DATA_API}/rpc/${functionName}`, {
     method: "POST",
@@ -58,6 +72,7 @@ export async function POST(request: NextRequest) {
 
   try {
     if (!auth || !/^Bearer\s+/i.test(auth)) return NextResponse.json({ success: false, error: "Silakan login melalui Akun SALVIAN AI CREATOR terlebih dahulu." }, { status: 401 });
+    const userId = getUserId(auth);
 
     if (action === "balance") {
       const credit = await getCredits(auth);
@@ -76,7 +91,9 @@ export async function POST(request: NextRequest) {
       if (!response.ok) return NextResponse.json({ success: false, error: `Mureka Query ${response.status}`, data }, { status: response.status });
       const audio = findAudio(data);
       const status = findStatus(data);
-      try { await libraryRequest(auth, "PATCH", { status, audio_url: audio, updated_at: new Date().toISOString(), provider_data: data }, `?task_id=eq.${encodeURIComponent(String(taskId))}`); } catch (libraryError) { console.error("MUSIC LIBRARY STATUS ERROR", libraryError); }
+      try {
+        await libraryRequest(auth, "PATCH", { status, audio_url: audio, updated_at: new Date().toISOString(), provider_data: data }, `?task_id=eq.${encodeURIComponent(String(taskId))}${userId ? `&user_id=eq.${encodeURIComponent(userId)}` : ""}`);
+      } catch (libraryError) { console.error("MUSIC LIBRARY STATUS ERROR", libraryError); }
       return NextResponse.json({ success: true, taskId: String(taskId), status, audio, url: audio, data });
     }
 
@@ -92,8 +109,6 @@ export async function POST(request: NextRequest) {
     let providerSucceeded = false;
     try {
       const requestedModel = String(body?.model || "auto").trim();
-      // The UI label may say v5.5 Pro for product continuity, but Mureka's current API
-      // accepts only its current model IDs. Map legacy/UI labels to auto.
       const providerModel = MUREKA_MODELS.has(requestedModel) ? requestedModel : "auto";
       const payload: Record<string, unknown> = { lyrics: lyrics.slice(0, 5000), model: providerModel, n: Math.min(Math.max(Number(body?.n) || 2, 1), 3), stream: false };
       if (style) payload.prompt = style.slice(0, 1024);
@@ -115,16 +130,18 @@ export async function POST(request: NextRequest) {
       const status = findStatus(data);
       let librarySaved = false;
       try {
-        const libraryResponse = await libraryRequest(auth, "POST", {
+        const libraryBody: Record<string, unknown> = {
           title: String(body?.title || "Salvian AI Song").slice(0, 160), lyrics, style,
           model: String(body?.model || "auto").slice(0, 80), task_id: taskId, status,
           audio_url: audio, provider_data: data, updated_at: new Date().toISOString()
-        });
+        };
+        if (userId) libraryBody.user_id = userId;
+        const libraryResponse = await libraryRequest(auth, "POST", libraryBody);
         librarySaved = libraryResponse.ok;
         if (!libraryResponse.ok) console.error("MUSIC LIBRARY SAVE", await libraryResponse.text().catch(() => ""));
       } catch (libraryError) { console.error("MUSIC LIBRARY SAVE ERROR", libraryError); }
 
-      return NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, url: audio, credits: Number(creditRow?.balance || 0), librarySaved, data });
+      return NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), librarySaved, data });
     } finally {
       if (!providerSucceeded) { try { await refundCredits(auth); } catch (refundError) { console.error("MUSIC CREDIT REFUND ERROR", refundError); } }
     }
