@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { LoaderCircle, Music2, CheckCircle2, AlertTriangle, Clock3 } from "lucide-react";
 import { createClient } from "@neondatabase/neon-js";
 
-const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
+const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
 const DATA = "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
 const neon = createClient({ auth: { url: AUTH }, dataApi: { url: DATA } });
 const TERMINAL = ["succeeded", "success", "completed", "complete", "done", "failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled"];
@@ -45,13 +45,13 @@ export default function GenerationMonitorV2() {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const active = useRef<MusicState | null>(null);
-  const originalFetch = useRef<typeof window.fetch | null>(null);
 
   useEffect(() => {
     let stopped = false;
     let pollTimer: number | null = null;
     let clockTimer: number | null = null;
     let hideTimer: number | null = null;
+    const originalFetch = window.fetch.bind(window);
 
     const start = (id: string, createdAt = 0) => {
       if (!id || stopped) return;
@@ -83,7 +83,7 @@ export default function GenerationMonitorV2() {
       const jwt = await token();
       if (!jwt || stopped) return;
       try {
-        const res = await fetch("/api/music", {
+        const res = await originalFetch("/api/music", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
           body: JSON.stringify({ action: "status", taskId: id }),
@@ -126,10 +126,8 @@ export default function GenerationMonitorV2() {
 
     window.addEventListener("salvian-generation-started", onStarted);
 
-    // The music page calls /api/music directly. Intercept its response so the
-    // monitor starts immediately, without waiting for a cookie or Library refresh.
     const patchedFetch: typeof window.fetch = async (...args) => {
-      const response = await window.fetch.apply(window, args as Parameters<typeof window.fetch>);
+      const response = await originalFetch(...args);
       try {
         const request = args[0];
         const url = typeof request === "string" ? request : request instanceof Request ? request.url : "";
@@ -150,9 +148,8 @@ export default function GenerationMonitorV2() {
       } catch (error) { console.error("SALVIAN FETCH MONITOR", error); }
       return response;
     };
-    originalFetch.current = window.fetch;
-    window.fetch = patchedFetch;
 
+    window.fetch = patchedFetch;
     const existing = getCookie("salvian_generation_task");
     if (existing) start(existing);
     void check();
@@ -167,7 +164,7 @@ export default function GenerationMonitorV2() {
       if (pollTimer) window.clearInterval(pollTimer);
       if (clockTimer) window.clearInterval(clockTimer);
       if (hideTimer) window.clearTimeout(hideTimer);
-      if (originalFetch.current) window.fetch = originalFetch.current;
+      window.fetch = originalFetch;
     };
   }, []);
 
