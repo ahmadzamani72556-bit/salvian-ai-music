@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { refundMusicCreditsServer } from "../../../../lib/server-credit-refund";
+import { refundMusicCreditsServer, updateMusicProjectServer } from "../../../../lib/server-credit-refund";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -122,12 +122,9 @@ async function saveLibrary(auth: string, body: Record<string, unknown>) {
 }
 
 async function patchLibrary(auth: string, taskIdValue: string, statusValue: string, audioUrl: string | null, providerData: unknown) {
-  return fetch(`${DATA_API}/salvian_music_projects?task_id=eq.${encodeURIComponent(taskIdValue)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" },
-    body: JSON.stringify({ status: statusValue, audio_url: audioUrl, updated_at: new Date().toISOString(), provider_data: providerData }),
-    cache: "no-store",
-  });
+  const userId = subject(auth);
+  if (!userId) throw new Error("Sesi pengguna tidak valid untuk update Library instrumental.");
+  return updateMusicProjectServer(userId, taskIdValue, statusValue, audioUrl, providerData);
 }
 
 async function refund(auth: string) {
@@ -153,7 +150,7 @@ export async function POST(request: NextRequest) {
       const a = done && !bad ? audio(q.data) : null;
       try {
         const patched = await patchLibrary(auth, id, s, a, q.data);
-        if (!patched.ok) console.error("INSTRUMENTAL LIBRARY STATUS ERROR", patched.status, await patched.text().catch(() => ""));
+        if (!patched) console.error("INSTRUMENTAL LIBRARY STATUS ERROR: project not found");
       } catch (e) {
         console.error("INSTRUMENTAL LIBRARY STATUS ERROR", e);
       }
