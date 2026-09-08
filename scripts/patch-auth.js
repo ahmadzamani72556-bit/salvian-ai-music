@@ -127,5 +127,15 @@ if (start !== -1 && end !== -1) {
   s = s.slice(0, start) + profile + s.slice(end);
 }
 
+// The active Music Studio lives in components/premium-music-studio.tsx.
+// Keep its parent-account JWT request in explicit authenticated mode when this
+// build patch runs, so returning from Creator never falls back to an anonymous token.
+const musicFile = path.join(process.cwd(), "components", "premium-music-studio.tsx");
+if (fs.existsSync(musicFile)) {
+  let music = fs.readFileSync(musicFile, "utf8");
+  music = music.replace('jwt = await auth.getJWTToken?.();', 'jwt = await auth.getJWTToken?.(false);');
+  fs.writeFileSync(musicFile, music);
+}
+
 fs.writeFileSync(file, s);
 console.log("SALVIAN central account patch applied");
