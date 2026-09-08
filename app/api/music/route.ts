@@ -7,6 +7,7 @@ const BASE_URL = process.env.MUREKA_BASE_URL || "https://api.mureka.ai";
 const API_KEY = process.env.MUREKA_API_KEY || process.env.MUSIC_API_KEY;
 const DATA_API = process.env.NEON_DATA_API_URL || "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
 const MUSIC_CREDIT_COST = Math.max(1, Number(process.env.SALVIAN_MUSIC_CREDIT_COST || 100));
+const MUREKA_MODELS = new Set(["auto", "mureka-7.6", "mureka-o2", "mureka-8", "mureka-9", "mureka-9.5"]);
 
 function cleanUrl(value: unknown) { if (typeof value !== "string") return null; const s = value.trim(); return /^https?:\/\//i.test(s) ? s : null; }
 function findAudio(value: unknown, depth = 0): string | null {
@@ -62,7 +63,8 @@ export async function POST(request: NextRequest) {
       const credit = await getCredits(auth);
       if (!credit.response.ok) return NextResponse.json({ success: false, error: "Gagal membaca saldo kredit pusat." }, { status: 401 });
       const row = Array.isArray(credit.data) ? credit.data[0] : credit.data;
-      return NextResponse.json({ success: true, plan: row?.plan || "FREE", credits: Number(row?.credits || 0) });
+      if (!row || row.credits === undefined || row.credits === null) return NextResponse.json({ success: false, error: "Profil kredit akun belum tersedia." }, { status: 404 });
+      return NextResponse.json({ success: true, plan: row.plan || "FREE", credits: Number(row.credits) });
     }
 
     if (action === "status") {
@@ -71,7 +73,7 @@ export async function POST(request: NextRequest) {
       if (!taskId) return NextResponse.json({ success: false, error: "Task ID belum dikirim." }, { status: 400 });
       const response = await fetch(`${BASE_URL}/v1/song/query/${encodeURIComponent(String(taskId))}`, { headers: { Authorization: `Bearer ${API_KEY}`, Accept: "application/json" }, cache: "no-store" });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) return NextResponse.json({ success: false, taskId, error: `Mureka Query ${response.status}`, data }, { status: response.status });
+      if (!response.ok) return NextResponse.json({ success: false, error: `Mureka Query ${response.status}`, data }, { status: response.status });
       const audio = findAudio(data);
       const status = findStatus(data);
       try { await libraryRequest(auth, "PATCH", { status, audio_url: audio, updated_at: new Date().toISOString(), provider_data: data }, `?task_id=eq.${encodeURIComponent(String(taskId))}`); } catch (libraryError) { console.error("MUSIC LIBRARY STATUS ERROR", libraryError); }
@@ -89,7 +91,11 @@ export async function POST(request: NextRequest) {
 
     let providerSucceeded = false;
     try {
-      const payload: Record<string, unknown> = { lyrics, model: String(body?.model || "auto"), n: Math.min(Math.max(Number(body?.n) || 2, 1), 3), stream: false };
+      const requestedModel = String(body?.model || "auto").trim();
+      // The UI label may say v5.5 Pro for product continuity, but Mureka's current API
+      // accepts only its current model IDs. Map legacy/UI labels to auto.
+      const providerModel = MUREKA_MODELS.has(requestedModel) ? requestedModel : "auto";
+      const payload: Record<string, unknown> = { lyrics: lyrics.slice(0, 5000), model: providerModel, n: Math.min(Math.max(Number(body?.n) || 2, 1), 3), stream: false };
       if (style) payload.prompt = style.slice(0, 1024);
       if (body?.instrumental) payload.instrumental = true;
       if (body?.reference_id) payload.reference_id = String(body.reference_id);
@@ -98,7 +104,10 @@ export async function POST(request: NextRequest) {
 
       const response = await fetch(`${BASE_URL}/v1/song/generate`, { method: "POST", headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(payload) });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) return NextResponse.json({ success: false, error: `Mureka API ${response.status}`, data }, { status: response.status });
+      if (!response.ok) {
+        const providerMessage = data?.error?.message || data?.message || data?.error || `Mureka API ${response.status}`;
+        return NextResponse.json({ success: false, error: `Mureka API ${response.status}: ${String(providerMessage)}`, data }, { status: response.status });
+      }
 
       providerSucceeded = true;
       const taskId = findTaskId(data);
