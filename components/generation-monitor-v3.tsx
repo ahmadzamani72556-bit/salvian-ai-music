@@ -37,6 +37,15 @@ export default function GenerationMonitorV3() {
 
     const begin = () => { current = { id: "pending", startedAt: Date.now() }; setTaskId("pending"); setStatus("preparing"); setDone(false); setIsFailed(false); setElapsed(0); };
     const attach = (id: string, createdAt = 0) => { if (!id || stopped) return; const startedAt = createdAt > 0 ? createdAt : current?.startedAt || Date.now(); current = { id, startedAt }; setCookie("salvian_generation_task", id); setTaskId(id); setStatus("preparing"); setDone(false); setIsFailed(false); setElapsed(Math.max(0, (Date.now() - startedAt) / 1000)); };
+    const finishAndClear = (bad: boolean, nextStatus: string, messageMs = 8000) => {
+      clearCookie("salvian_generation_task");
+      clearCookie("salvian_generation_endpoint");
+      setIsFailed(bad);
+      setDone(!bad);
+      setStatus(nextStatus);
+      if (hide) window.clearTimeout(hide);
+      hide = window.setTimeout(() => { if (!stopped) { current = null; setTaskId(""); } }, messageMs);
+    };
     const token = async () => { try { const session = await neon.auth.getSession(); if (!session?.data?.user) return null; const auth = neon.auth as unknown as { getJWTToken?: (allowAnonymous?: boolean) => Promise<string | null> }; return auth.getJWTToken ? await auth.getJWTToken(false) : null; } catch { return null; } };
     const check = async () => {
       if (stopped) return;
@@ -45,10 +54,11 @@ export default function GenerationMonitorV3() {
       const endpoint = cookie("salvian_generation_endpoint") || "/api/music";
       try {
         const res = await originalFetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "status", taskId: id }), cache: "no-store" });
-        const data = await res.json().catch(() => ({})); if (!res.ok || stopped) return;
+        const data = await res.json().catch(() => ({})); if (stopped) return;
+        if (!res.ok) { finishAndClear(true, "error"); return; }
         const next = String(data.status || "preparing"); const bad = Boolean(data.failed) || failed(next); const created = Number(data.createdAt || 0) * 1000; const startedAt = created > 0 ? created : current?.startedAt || Date.now(); current = { id, startedAt };
         setStatus(next); setIsFailed(bad); setLastCheck(Date.now()); setElapsed(Math.max(0, (Date.now() - startedAt) / 1000));
-        if (data.finished === true || terminal(next)) { clearCookie("salvian_generation_task"); clearCookie("salvian_generation_endpoint"); setDone(!bad); if (hide) window.clearTimeout(hide); hide = window.setTimeout(() => { if (!stopped && current?.id === id) { current = null; setTaskId(""); } }, 15000); }
+        if (data.finished === true || terminal(next)) finishAndClear(bad, next);
       } catch (e) { console.error("SALVIAN MUSIC MONITOR", e); }
     };
     const pointer = (event: Event) => { const el = event.target instanceof HTMLElement ? event.target : null; const button = el?.closest("button"); const text = (button?.textContent || "").toLowerCase(); if (text.includes("buat musik") || text.includes("buat lagu") || text.includes("buatkan lagu")) begin(); };
@@ -64,14 +74,15 @@ export default function GenerationMonitorV3() {
         try { parsedBody = JSON.parse(init.body) as Record<string, unknown>; action = String(parsedBody?.action || ""); } catch {}
       }
 
-      const generation = url.includes("/api/music") && method === "POST" && action !== "status" && action !== "balance";
+      const musicEndpoint = url.endsWith("/api/music") || url.endsWith("/api/music/instrumental");
+      const generation = musicEndpoint && method === "POST" && action !== "status" && action !== "balance";
       if (!generation) return originalFetch(...args);
 
       begin();
-      const instrumentalRequest = url.endsWith("/api/music") && parsedBody?.instrumental === true;
+      const instrumentalRequest = url.endsWith("/api/music/instrumental") || parsedBody?.instrumental === true;
       let actualArgs: Parameters<typeof fetch> = args;
 
-      if (instrumentalRequest) {
+      if (instrumentalRequest && url.endsWith("/api/music")) {
         const source = parsedBody || {};
         const instrumentalBody = JSON.stringify({
           title: String(source.title || "Instrumental SALVIAN AI"),
@@ -81,19 +92,17 @@ export default function GenerationMonitorV3() {
         const headers = new Headers(init?.headers || (request instanceof Request ? request.headers : undefined));
         headers.set("Content-Type", "application/json");
         actualArgs = ["/api/music/instrumental", { ...init, method: "POST", headers, body: instrumentalBody }];
-        setCookie("salvian_generation_endpoint", "/api/music/instrumental");
-      } else {
-        setCookie("salvian_generation_endpoint", "/api/music");
       }
+      setCookie("salvian_generation_endpoint", instrumentalRequest ? "/api/music/instrumental" : "/api/music");
 
       const response = await originalFetch(...actualArgs);
       const clone = response.clone();
       void clone.json().then((data: Record<string, unknown>) => {
         const id = data?.taskId ? String(data.taskId) : "";
         const created = Number(data?.createdAt || 0) * 1000;
-        if (id) { attach(id, created); void check(); }
-        else if (data?.success === false) { setIsFailed(true); setStatus("failed"); }
-      }).catch(() => {});
+        if (id && response.ok && data?.success !== false) { attach(id, created); void check(); }
+        else if (!response.ok || data?.success === false) { setElapsed(0); finishAndClear(true, "error"); }
+      }).catch(() => { if (!response.ok) finishAndClear(true, "error"); });
       return response;
     };
 
@@ -103,7 +112,7 @@ export default function GenerationMonitorV3() {
     if (existing) attach(existing);
     void check();
     poll = window.setInterval(() => void check(), 5000);
-    clock = window.setInterval(() => { if (!stopped && current?.startedAt) { const seconds = Math.max(0, (Date.now() - current.startedAt) / 1000); setElapsed(seconds); if (seconds >= CONTROL_LIMIT_SECONDS && current.id !== "pending") { setIsFailed(true); setStatus("timeout"); clearCookie("salvian_generation_task"); } } }, 1000);
+    clock = window.setInterval(() => { if (!stopped && current?.startedAt) { const seconds = Math.max(0, (Date.now() - current.startedAt) / 1000); setElapsed(seconds); if (seconds >= CONTROL_LIMIT_SECONDS && current.id !== "pending") finishAndClear(true, "timeout"); } }, 1000);
     return () => { stopped = true; document.removeEventListener("click", pointer, true); if (poll) window.clearInterval(poll); if (clock) window.clearInterval(clock); if (hide) window.clearTimeout(hide); window.fetch = originalFetch; };
   }, []);
 
