@@ -1,6 +1,6 @@
 {
   "name": "salvian-ai-music",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@neondatabase/neon-js": "0.7.0-beta",
+    "@neondatabase/serverless": "1.1.0",
     "lucide-react": "^0.468.0",
     "next": "15.5.7",
     "openai": "^6.10.0",
