@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
+const DATA_API = process.env.NEON_DATA_API_URL || "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
+
 const SYSTEM_PROMPT = `Anda adalah Asisten AI resmi di SALVIAN AI MUSIC.
 Tugas utama Anda adalah membantu creator memahami dan menggunakan SALVIAN AI MUSIC dengan bahasa Indonesia yang ramah, singkat, jelas, dan praktis.
 
@@ -24,8 +26,28 @@ Aturan penting:
 - Jika pertanyaan di luar SALVIAN AI MUSIC, jawab singkat dan arahkan kembali ke fungsi asisten ini.
 `;
 
+async function verifyAuth(auth: string | null) {
+  if (!auth || !/^Bearer\s+/i.test(auth)) return false;
+  try {
+    const response = await fetch(`${DATA_API}/rpc/salvian_get_my_credits`, {
+      method: "POST",
+      headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" },
+      body: "{}",
+      cache: "no-store",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: Request) {
   try {
+    const auth = request.headers.get("authorization");
+    if (!(await verifyAuth(auth))) {
+      return NextResponse.json({ error: "Silakan masuk melalui Akun SALVIAN AI CREATOR terlebih dahulu." }, { status: 401 });
+    }
+
     const body = await request.json().catch(() => ({}));
     const message = typeof body.message === "string" ? body.message.trim() : "";
     const history = Array.isArray(body.history) ? body.history : [];
