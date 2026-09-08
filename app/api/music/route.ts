@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refundMusicCreditsServer } from "../../../lib/server-credit-refund";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -102,7 +103,9 @@ async function consume(auth: string) {
 }
 
 async function refund(auth: string) {
-  return rpc(auth, "salvian_refund_credits", { p_amount: MUSIC_CREDIT_COST, p_description: "Refund pembuatan lagu SALVIAN AI MUSIC" });
+  const userId = subject(auth);
+  if (!userId) throw new Error("Sesi pengguna tidak valid untuk refund.");
+  return refundMusicCreditsServer(userId, MUSIC_CREDIT_COST, "Refund pembuatan lagu SALVIAN AI MUSIC");
 }
 
 export async function POST(request: NextRequest) {
