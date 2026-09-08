@@ -100,10 +100,6 @@ async function patchProject(auth: string, taskId: string, status: string, audio:
   return updateMusicProjectServer(userId, taskId, status, audio, providerData);
 }
 
-async function consume(auth: string) {
-  return rpc(auth, "salvian_consume_credits", { p_amount: MUSIC_CREDIT_COST, p_type: "USAGE", p_description: "Pembuatan lagu SALVIAN AI MUSIC" });
-}
-
 async function refund(auth: string) {
   const userId = subject(auth);
   if (!userId) throw new Error("Sesi pengguna tidak valid untuk refund.");
@@ -122,7 +118,7 @@ export async function POST(request: NextRequest) {
       const credit = await rpc(auth, "salvian_get_my_credits");
       const row = Array.isArray(credit.data) ? credit.data[0] : credit.data;
       if (!credit.response.ok || !row || row.credits == null) return NextResponse.json({ success: false, error: "Gagal membaca saldo kredit pusat." }, { status: 401 });
-      return NextResponse.json({ success: true, plan: row.plan || "FREE", credits: Number(row.credits) });
+      return NextResponse.json({ success: true, plan: row.plan || "FREE", credits: Number(row.credits), creditCost: MUSIC_CREDIT_COST });
     }
 
     if (action === "status") {
@@ -140,8 +136,6 @@ export async function POST(request: NextRequest) {
       return result;
     }
 
-    // Instrumental has its own Mureka API and its own route. A direct client request is
-    // redirected to that route; same-origin 307 preserves the POST method/body.
     if (body?.instrumental === true) return NextResponse.redirect(new URL("/api/music/instrumental", request.url), 307);
 
     const lyrics = String(body?.lyrics || "").trim();
@@ -150,10 +144,15 @@ export async function POST(request: NextRequest) {
 
     const credit = await consume(auth);
     const creditRow = Array.isArray(credit.data) ? credit.data[0] : credit.data;
-    if (!credit.response.ok || creditRow?.success !== true) return NextResponse.json({ success: false, error: creditRow?.message || "Kredit tidak cukup.", credits: Number(creditRow?.balance || 0) }, { status: credit.response.status === 402 ? 402 : 503 });
+    if (!credit.response.ok || creditRow?.success !== true) return NextResponse.json({ success: false, error: creditRow?.message || "Kredit tidak cukup.", credits: Number(creditRow?.balance || 0), creditCost: MUSIC_CREDIT_COST }, { status: credit.response.status === 402 ? 402 : 503 });
 
     let providerAccepted = false;
-    let shouldRefund = false;
+    let shouldRefundTerminalFailure = false;
+    let terminalTaskId = "";
+    let terminalStatus = "";
+    let terminalAudio: string | null = null;
+    let terminalProviderData: unknown = null;
+
     try {
       const requestedModel = String(body?.model || "auto").trim();
       const model = MODELS.has(requestedModel) ? requestedModel : "auto";
@@ -162,7 +161,6 @@ export async function POST(request: NextRequest) {
       if (prompt) musicRequest.prompt = prompt;
       const gender = String(body?.gender || "").toLowerCase();
       if (gender === "female" || gender === "male") musicRequest.gender = gender;
-      // Mureka O2 does not support vocal_id or melody_id.
       if (model !== "mureka-o2") {
         if (body?.reference_id) musicRequest.reference_id = String(body.reference_id);
         if (body?.vocal_id) musicRequest.vocal_id = String(body.vocal_id);
@@ -180,15 +178,29 @@ export async function POST(request: NextRequest) {
       const done = terminal(status);
       const bad = failure(status);
       const audio = done && !bad ? findAudio(generated.data) : null;
-      shouldRefund = done && bad;
+      shouldRefundTerminalFailure = done && bad;
+      terminalTaskId = taskId;
+      terminalStatus = status;
+      terminalAudio = audio;
+      terminalProviderData = generated.data;
 
       const saved = await saveProject(auth, { title: String(body?.title || "Salvian AI Song").slice(0, 160), lyrics, style, model: String(body?.model || model).slice(0, 80), taskId, status, audio, providerData: generated.data });
-      const result = NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), librarySaved: saved.ok, createdAt: Number(generated.data?.created_at || generated.data?.data?.created_at || 0), data: generated.data });
+      const result = NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), creditCost: MUSIC_CREDIT_COST, librarySaved: saved.ok, createdAt: Number(generated.data?.created_at || generated.data?.data?.created_at || 0), data: generated.data });
       if (!done) result.cookies.set("salvian_generation_task", taskId, { path: "/", maxAge: 3600, sameSite: "lax" });
       return result;
     } finally {
-      if (!providerAccepted || shouldRefund) {
+      if (!providerAccepted) {
         try { await refund(auth); } catch (e) { console.error("MUSIC CREDIT REFUND ERROR", e); }
+      } else if (shouldRefundTerminalFailure && terminalTaskId) {
+        // Terminal failures are refunded through the same idempotent project
+        // update used by the polling monitor. This prevents an immediate failure
+        // from being refunded once here and again on the next status poll.
+        try {
+          const patched = await patchProject(auth, terminalTaskId, terminalStatus, terminalAudio, terminalProviderData);
+          if (!patched) console.error("MUSIC TERMINAL REFUND DEFERRED: project not found");
+        } catch (e) {
+          console.error("MUSIC TERMINAL REFUND DEFERRED", e);
+        }
       }
     }
   } catch (error) {
