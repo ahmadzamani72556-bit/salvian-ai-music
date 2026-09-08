@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import GenerationMonitorV3 from "../components/generation-monitor-v3";
+import AccountEntryBridge from "../components/account-entry-bridge";
 
 export const metadata: Metadata = {
   title: "SALVIAN AI MUSIC STUDIO — Premium AI Music Creation",
@@ -25,6 +26,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="id">
       <body>
         {children}
+        <AccountEntryBridge />
         <GenerationMonitorV3 />
       </body>
     </html>
