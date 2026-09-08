@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { refundMusicCreditsServer } from "../../../lib/server-credit-refund";
+import { refundMusicCreditsServer, updateMusicProjectServer } from "../../../lib/server-credit-refund";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -95,7 +95,9 @@ async function saveProject(auth: string, body: Record<string, unknown>) {
 }
 
 async function patchProject(auth: string, taskId: string, status: string, audio: string | null, providerData: unknown) {
-  return fetch(`${DATA_API}/salvian_music_projects?task_id=eq.${encodeURIComponent(taskId)}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status, audio_url: audio, updated_at: new Date().toISOString(), provider_data: providerData }), cache: "no-store" });
+  const userId = subject(auth);
+  if (!userId) throw new Error("Sesi pengguna tidak valid untuk update Library.");
+  return updateMusicProjectServer(userId, taskId, status, audio, providerData);
 }
 
 async function consume(auth: string) {
@@ -132,7 +134,7 @@ export async function POST(request: NextRequest) {
       const done = terminal(status);
       const bad = failure(status);
       const audio = done && !bad ? findAudio(q.data) : null;
-      try { const patch = await patchProject(auth, taskId, status, audio, q.data); if (!patch.ok) console.error("MUSIC LIBRARY STATUS ERROR", patch.status); } catch (e) { console.error("MUSIC LIBRARY STATUS ERROR", e); }
+      try { const patch = await patchProject(auth, taskId, status, audio, q.data); if (!patch) console.error("MUSIC LIBRARY STATUS ERROR: project not found"); } catch (e) { console.error("MUSIC LIBRARY STATUS ERROR", e); }
       const result = NextResponse.json({ success: true, taskId, status, audio, url: audio, finished: done, failed: bad, createdAt: Number(q.data?.created_at || q.data?.data?.created_at || 0), finishedAt: Number(q.data?.finished_at || q.data?.data?.finished_at || 0), failedReason: q.data?.failed_reason || q.data?.data?.failed_reason || null, data: q.data });
       if (done) result.cookies.set("salvian_generation_task", "", { path: "/", maxAge: 0 });
       return result;
