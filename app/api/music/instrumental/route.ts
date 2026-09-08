@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refundMusicCreditsServer } from "../../../../lib/server-credit-refund";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -129,6 +130,12 @@ async function patchLibrary(auth: string, taskIdValue: string, statusValue: stri
   });
 }
 
+async function refund(auth: string) {
+  const userId = subject(auth);
+  if (!userId) throw new Error("Sesi pengguna tidak valid untuk refund instrumental.");
+  return refundMusicCreditsServer(userId, MUSIC_CREDIT_COST, "Refund instrumental SALVIAN AI MUSIC");
+}
+
 export async function POST(request: NextRequest) {
   const auth = request.headers.get("authorization");
   if (!auth || !/^Bearer\s+/i.test(auth)) return NextResponse.json({ success: false, error: "Silakan login melalui Akun SALVIAN AI terlebih dahulu." }, { status: 401 });
@@ -205,7 +212,7 @@ export async function POST(request: NextRequest) {
     } finally {
       if (!providerSucceeded || shouldRefund) {
         try {
-          await rpc(auth, "salvian_refund_credits", { p_amount: MUSIC_CREDIT_COST, p_description: "Refund instrumental SALVIAN AI MUSIC" });
+          await refund(auth);
         } catch (e) {
           console.error("INSTRUMENTAL REFUND", e);
         }
