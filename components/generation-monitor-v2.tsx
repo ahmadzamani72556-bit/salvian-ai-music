@@ -10,8 +10,6 @@ const neon = createClient({ auth: { url: AUTH }, dataApi: { url: DATA } });
 const TERMINAL = ["succeeded", "success", "completed", "complete", "done", "failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled"];
 const FAILURE = ["failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"];
 
-type MusicState = { id: string; status: string; startedAt: number; done: boolean; failed: boolean; audio?: string | null };
-
 function getCookie(name: string) {
   if (typeof document === "undefined") return "";
   const row = document.cookie.split(";").map(v => v.trim()).find(v => v.startsWith(`${name}=`));
@@ -37,15 +35,14 @@ function stage(status: string) {
   return "Memproses lagu";
 }
 
+type ActiveTask = { id: string; startedAt: number };
+
 export default function GenerationMonitorV2() {
   const [taskId, setTaskId] = useState("");
   const [status, setStatus] = useState("preparing");
   const [done, setDone] = useState(false);
   const [isFailed, setIsFailed] = useState(false);
-  const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const active = useState<MusicState | null>(null)[0];
-  const [activeState, setActiveState] = useState<MusicState | null>(null);
 
   useEffect(() => {
     let stopped = false;
@@ -53,19 +50,17 @@ export default function GenerationMonitorV2() {
     let clockTimer: number | null = null;
     let hideTimer: number | null = null;
     const originalFetch = window.fetch.bind(window);
-    let current: MusicState | null = null;
+    let current: ActiveTask | null = null;
 
     const start = (id: string, createdAt = 0) => {
       if (!id || stopped) return;
       const startMs = createdAt > 0 ? createdAt : Date.now();
-      current = { id, status: "preparing", startedAt: startMs, done: false, failed: false };
-      setActiveState(current);
+      current = { id, startedAt: startMs };
       setCookie("salvian_generation_task", id);
       setTaskId(id);
       setStatus("preparing");
       setDone(false);
       setIsFailed(false);
-      setStartedAt(startMs);
       setElapsed(Math.max(0, (Date.now() - startMs) / 1000));
       if (hideTimer) window.clearTimeout(hideTimer);
     };
@@ -99,11 +94,9 @@ export default function GenerationMonitorV2() {
         const created = Number(data.createdAt || 0) * 1000;
         const currentStart = created > 0 ? created : (current?.startedAt || Date.now());
         if (!current || current.id !== id) start(id, currentStart);
-        current = { id, status: next, startedAt: currentStart, done: Boolean(data.finished) && !bad, failed: bad, audio: data.audio || null };
-        setActiveState(current);
+        current = { id, startedAt: currentStart };
         setStatus(next);
         setIsFailed(bad);
-        setStartedAt(currentStart);
         setElapsed(Math.max(0, (Date.now() - currentStart) / 1000));
 
         if (data.finished === true || terminal(next)) {
@@ -114,7 +107,6 @@ export default function GenerationMonitorV2() {
           hideTimer = window.setTimeout(() => {
             if (!stopped && current?.id === id) {
               current = null;
-              setActiveState(null);
               setTaskId("");
             }
           }, 15000);
@@ -131,6 +123,8 @@ export default function GenerationMonitorV2() {
 
     window.addEventListener("salvian-generation-started", onStarted);
 
+    // The music page calls /api/music directly. Intercept its response so the
+    // monitor starts immediately, without waiting for a cookie or Library refresh.
     const patchedFetch: typeof window.fetch = async (...args) => {
       const response = await originalFetch(...args);
       try {
