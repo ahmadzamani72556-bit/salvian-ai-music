@@ -38,15 +38,7 @@ export default function GenerationMonitorV3() {
 
     const begin = () => { current = { id: "pending", startedAt: Date.now() }; setTaskId("pending"); setStatus("preparing"); setDone(false); setIsFailed(false); setElapsed(0); };
     const attach = (id: string, createdAt = 0) => { if (!id || stopped) return; const startedAt = createdAt > 0 ? createdAt : current?.startedAt || Date.now(); current = { id, startedAt }; setCookie("salvian_generation_task", id); setTaskId(id); setStatus("preparing"); setDone(false); setIsFailed(false); setElapsed(Math.max(0, (Date.now() - startedAt) / 1000)); };
-    const finishAndClear = (bad: boolean, nextStatus: string, messageMs = 8000) => {
-      clearCookie("salvian_generation_task");
-      clearCookie("salvian_generation_endpoint");
-      setIsFailed(bad);
-      setDone(!bad);
-      setStatus(nextStatus);
-      if (hide) window.clearTimeout(hide);
-      hide = window.setTimeout(() => { if (!stopped) { current = null; setTaskId(""); } }, messageMs);
-    };
+    const finishAndClear = (bad: boolean, nextStatus: string, messageMs = 8000) => { clearCookie("salvian_generation_task"); clearCookie("salvian_generation_endpoint"); setIsFailed(bad); setDone(!bad); setStatus(nextStatus); if (hide) window.clearTimeout(hide); hide = window.setTimeout(() => { if (!stopped) { current = null; setTaskId(""); } }, messageMs); };
     const token = async () => { try { const session = await neon.auth.getSession(); if (!session?.data?.user) return null; const auth = neon.auth as unknown as { getJWTToken?: (allowAnonymous?: boolean) => Promise<string | null> }; return auth.getJWTToken ? await auth.getJWTToken(false) : null; } catch { return null; } };
     const check = async () => {
       if (stopped) return;
@@ -75,6 +67,19 @@ export default function GenerationMonitorV3() {
         try { parsedBody = JSON.parse(init.body) as Record<string, unknown>; action = String(parsedBody?.action || ""); } catch {}
       }
 
+      const assistantRequest = url.endsWith("/api/assistant") && method === "POST";
+      if (assistantRequest) {
+        try {
+          const jwt = await token();
+          if (jwt) {
+            const headers = new Headers(init?.headers || (request instanceof Request ? request.headers : undefined));
+            if (!headers.has("Authorization")) headers.set("Authorization", `Bearer ${jwt}`);
+            if (typeof request === "string") return originalFetch(request, { ...init, headers });
+            if (request instanceof Request) return originalFetch(new Request(request, { ...init, headers }));
+          }
+        } catch (e) { console.error("SALVIAN MUSIC ASSISTANT AUTH", e); }
+      }
+
       const musicEndpoint = url.endsWith("/api/music") || url.endsWith("/api/music/instrumental");
       const generation = musicEndpoint && method === "POST" && action !== "status" && action !== "balance";
       if (!generation) return originalFetch(...args);
@@ -82,20 +87,14 @@ export default function GenerationMonitorV3() {
       begin();
       const instrumentalRequest = url.endsWith("/api/music/instrumental") || parsedBody?.instrumental === true;
       let actualArgs: Parameters<typeof fetch> = args;
-
       if (instrumentalRequest && url.endsWith("/api/music")) {
         const source = parsedBody || {};
-        const instrumentalBody = JSON.stringify({
-          title: String(source.title || "Instrumental SALVIAN AI"),
-          prompt: String(source.style || source.prompt || "Instrumental music").slice(0, 1024),
-          model: String(source.model || "auto"),
-        });
+        const instrumentalBody = JSON.stringify({ title: String(source.title || "Instrumental SALVIAN AI"), prompt: String(source.style || source.prompt || "Instrumental music").slice(0, 1024), model: String(source.model || "auto") });
         const headers = new Headers(init?.headers || (request instanceof Request ? request.headers : undefined));
         headers.set("Content-Type", "application/json");
         actualArgs = ["/api/music/instrumental", { ...init, method: "POST", headers, body: instrumentalBody }];
       }
       setCookie("salvian_generation_endpoint", instrumentalRequest ? "/api/music/instrumental" : "/api/music");
-
       const response = await originalFetch(...actualArgs);
       const clone = response.clone();
       void clone.json().then((data: Record<string, unknown>) => {
