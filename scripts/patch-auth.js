@@ -22,6 +22,72 @@ s = s.replace(
   'const openCreator = () => { window.location.href = "https://salvian-ai-creator.vercel.app/akun.html?from=music"; };'
 );
 
+// Replace the session synchronizer with a robust JWT flow. Some Better Auth
+// sessions expose the short-lived JWT through the set-auth-jwt response header
+// while getJWTToken() can fail silently in browser cross-origin contexts.
+const syncStart = s.indexOf("  const syncSession = async () => {");
+const syncEnd = s.indexOf("\n\n  useEffect", syncStart);
+if (syncStart !== -1 && syncEnd !== -1) {
+  const syncSession = `  const syncSession = async () => {
+    const session = await neon.auth.getSession();
+    const user = session?.data?.user;
+    if (!user) {
+      setToken(null);
+      setCredits(null);
+      setUserName(\"\");
+      setUserEmail(\"\");
+      return false;
+    }
+
+    setUserName((user as { name?: string }).name || \"\");
+    setUserEmail(user.email || \"\");
+
+    let jwt: string | null = null;
+    try {
+      const authWithJwt = neon.auth as unknown as { getJWTToken?: (allowAnonymous?: boolean) => Promise<string | null> };
+      if (typeof authWithJwt.getJWTToken === \"function\") {
+        jwt = await authWithJwt.getJWTToken(false);
+      }
+    } catch (error) {
+      console.warn(\"SALVIAN JWT SDK\", error);
+    }
+
+    // Fallback: Better Auth can return the service JWT in the session response.
+    if (!jwt) {
+      try {
+        const sessionRes = await fetch(\`${AUTH}/get-session\`, { credentials: \"include\", cache: \"no-store\" });
+        const headerJwt = sessionRes.headers.get(\"set-auth-jwt\");
+        if (headerJwt) jwt = headerJwt;
+      } catch (error) {
+        console.warn(\"SALVIAN JWT HEADER\", error);
+      }
+    }
+
+    if (!jwt) {
+      setToken(null);
+      setCredits(null);
+      setNotice(\"Akun ditemukan, tetapi token layanan belum tersedia. Muat ulang halaman sekali.\");
+      return false;
+    }
+
+    setToken(jwt);
+    const [balanceRes] = await Promise.all([
+      fetch(\"/api/music\", { method: \"POST\", headers: { \"Content-Type\": \"application/json\", Authorization: \`Bearer \${jwt}\` }, body: JSON.stringify({ action: \"balance\" }) }),
+      loadLibrary(jwt, true),
+    ]);
+    const data = await balanceRes.json().catch(() => ({}));
+    if (balanceRes.ok) {
+      setPlan(data.plan || \"FREE\");
+      setCredits(Number(data.credits || 0));
+    } else {
+      setCredits(null);
+      setNotice(data.error || \"Gagal membaca saldo kredit akun.\");
+    }
+    return true;
+  };`;
+  s = s.slice(0, syncStart) + syncSession + s.slice(syncEnd);
+}
+
 const oldEffect = `  useEffect(() => {
     (async () => {
       try { await syncSession(); }
