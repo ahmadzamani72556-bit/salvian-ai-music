@@ -15,13 +15,10 @@ function findAudio(value: unknown, depth = 0): string | null {
   if (Array.isArray(value)) { for (const item of value) { const found = findAudio(item, depth + 1); if (found) return found; } return null; }
   if (typeof value !== "object") return null;
   const obj = value as Record<string, unknown>;
-  // Only inspect fields that can actually contain generated audio.
   for (const key of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl"]) {
     const found = cleanUrl(obj[key]);
     if (found) return found;
   }
-  // Mureka returns generated songs under choices[]. Never treat arbitrary URLs
-  // such as trace/provider URLs as an audio result.
   for (const key of ["choices", "songs", "outputs", "results"]) {
     if (obj[key]) { const found = findAudio(obj[key], depth + 1); if (found) return found; }
   }
@@ -31,9 +28,8 @@ function findTaskId(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   if (Array.isArray(value)) { for (const item of value) { const found = findTaskId(item); if (found) return found; } return null; }
   const obj = value as Record<string, unknown>;
-  // For /song/generate the top-level id is the asynchronous task ID.
   for (const key of ["id", "task_id", "taskId"]) if (obj[key] !== undefined && obj[key] !== null && String(obj[key]).trim()) return String(obj[key]).trim();
-  for (const key of ["task", "data"]) if (obj[key]) { const found = findTaskId(obj[key]); if (found) return found; }
+  for (const key of ["task", "data", "result"]) if (obj[key]) { const found = findTaskId(obj[key]); if (found) return found; }
   return null;
 }
 function findStatus(value: unknown): string { if (!value || typeof value !== "object") return "preparing"; const obj = value as Record<string, unknown>; for (const key of ["status", "state", "task_status", "taskStatus"]) if (obj[key] !== undefined && obj[key] !== null) return String(obj[key]).toLowerCase(); return "preparing"; }
@@ -137,19 +133,26 @@ export async function POST(request: NextRequest) {
         const providerMessage = data?.error?.message || data?.message || data?.error || `Mureka API ${response.status}`;
         return NextResponse.json({ success: false, error: `Mureka API ${response.status}: ${String(providerMessage)}`, data }, { status: response.status });
       }
-      providerSucceeded = true;
+
+      // Mureka documents the async task ID as the top-level `id` field.
+      // Do not silently consume credits when that ID is missing: without it
+      // the app cannot poll the task or persist a recoverable Library project.
       const taskId = findTaskId(data);
+      if (!taskId) {
+        console.error("MUREKA TASK ID MISSING", data);
+        return NextResponse.json({ success: false, error: "Mesin musik menerima permintaan tetapi tidak mengembalikan Task ID. Kredit akan dikembalikan.", data }, { status: 502 });
+      }
+
+      providerSucceeded = true;
       const status = findStatus(data);
       const audio = isFinished(status) && !isFailure(status) ? findAudio(data) : null;
       let librarySaved = false;
       let libraryError = "";
-      if (taskId) {
-        try {
-          const saved = await createLibraryProject(auth, { p_title: String(body?.title || "Salvian AI Song").slice(0, 160), p_lyrics: lyrics, p_style: style, p_model: String(body?.model || "auto").slice(0, 80), p_task_id: taskId, p_status: status, p_audio_url: audio, p_provider_data: data });
-          librarySaved = saved.response.ok;
-          if (!librarySaved) libraryError = `Library save gagal (${saved.response.status})`;
-        } catch (libraryErrorCaught) { libraryError = libraryErrorCaught instanceof Error ? libraryErrorCaught.message : "Library save gagal"; console.error("MUSIC LIBRARY SAVE ERROR", libraryErrorCaught); }
-      } else libraryError = "Mureka tidak mengembalikan Task ID.";
+      try {
+        const saved = await createLibraryProject(auth, { p_title: String(body?.title || "Salvian AI Song").slice(0, 160), p_lyrics: lyrics, p_style: style, p_model: String(body?.model || "auto").slice(0, 80), p_task_id: taskId, p_status: status, p_audio_url: audio, p_provider_data: data });
+        librarySaved = saved.response.ok;
+        if (!librarySaved) libraryError = `Library save gagal (${saved.response.status})`;
+      } catch (libraryErrorCaught) { libraryError = libraryErrorCaught instanceof Error ? libraryErrorCaught.message : "Library save gagal"; console.error("MUSIC LIBRARY SAVE ERROR", libraryErrorCaught); }
 
       const result = NextResponse.json({ success: true, title: String(body?.title || "Salvian AI Song"), taskId, status, audio, credits: Number(creditRow?.balance || 0), librarySaved, libraryError, createdAt: Number(data?.created_at || 0), data });
       if (taskId && !isFinished(status)) result.cookies.set("salvian_generation_task", String(taskId), { path: "/", maxAge: 3600, sameSite: "lax" });

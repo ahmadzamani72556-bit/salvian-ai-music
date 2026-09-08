@@ -35,7 +35,7 @@ function stage(status: string) {
   return "Memproses lagu";
 }
 
-type ActiveTask = { id: string; startedAt: number };
+type ActiveTask = { id: string; startedAt: number; pending?: boolean };
 
 export default function GenerationMonitorV2() {
   const [taskId, setTaskId] = useState("");
@@ -52,17 +52,26 @@ export default function GenerationMonitorV2() {
     const originalFetch = window.fetch.bind(window);
     let current: ActiveTask | null = null;
 
-    const start = (id: string, createdAt = 0) => {
-      if (!id || stopped) return;
+    const renderStart = (id: string, createdAt = 0, pending = false) => {
+      if (stopped) return;
       const startMs = createdAt > 0 ? createdAt : Date.now();
-      current = { id, startedAt: startMs };
-      setCookie("salvian_generation_task", id);
-      setTaskId(id);
+      current = { id, startedAt: startMs, pending };
+      if (id) setCookie("salvian_generation_task", id);
+      setTaskId(id || "pending");
       setStatus("preparing");
       setDone(false);
       setIsFailed(false);
       setElapsed(Math.max(0, (Date.now() - startMs) / 1000));
       if (hideTimer) window.clearTimeout(hideTimer);
+    };
+
+    const attachTask = (id: string, createdAt = 0) => {
+      if (!id || stopped) return;
+      const startMs = createdAt > 0 ? createdAt : current?.startedAt || Date.now();
+      current = { id, startedAt: startMs, pending: false };
+      setCookie("salvian_generation_task", id);
+      setTaskId(id);
+      setElapsed(Math.max(0, (Date.now() - startMs) / 1000));
     };
 
     const token = async () => {
@@ -77,7 +86,7 @@ export default function GenerationMonitorV2() {
     const check = async () => {
       if (stopped) return;
       const id = current?.id || getCookie("salvian_generation_task");
-      if (!id) return;
+      if (!id || id === "pending") return;
       const jwt = await token();
       if (!jwt || stopped) return;
       try {
@@ -93,8 +102,7 @@ export default function GenerationMonitorV2() {
         const bad = Boolean(data.failed) || failed(next);
         const created = Number(data.createdAt || 0) * 1000;
         const currentStart = created > 0 ? created : (current?.startedAt || Date.now());
-        if (!current || current.id !== id) start(id, currentStart);
-        current = { id, startedAt: currentStart };
+        current = { id, startedAt: currentStart, pending: false };
         setStatus(next);
         setIsFailed(bad);
         setElapsed(Math.max(0, (Date.now() - currentStart) / 1000));
@@ -118,43 +126,60 @@ export default function GenerationMonitorV2() {
 
     const onStarted = (e: Event) => {
       const d = (e as CustomEvent<{ taskId?: string; createdAt?: number }>).detail;
-      if (d?.taskId) { start(String(d.taskId), Number(d.createdAt || 0)); void check(); }
+      if (d?.taskId) { attachTask(String(d.taskId), Number(d.createdAt || 0)); void check(); }
     };
 
     window.addEventListener("salvian-generation-started", onStarted);
 
-    // The music page calls /api/music directly. Intercept only generation requests
-    // so status/balance polling cannot reset the timer.
     const patchedFetch: typeof window.fetch = async (...args) => {
+      const request = args[0];
+      const init = args[1];
+      const url = typeof request === "string" ? request : request instanceof Request ? request.url : "";
+      const method = (init?.method || (request instanceof Request ? request.method : "GET")).toUpperCase();
+      let action = "";
+      if (typeof init?.body === "string") {
+        try { action = String((JSON.parse(init.body) as Record<string, unknown>)?.action || ""); } catch { /* not JSON */ }
+      }
+
+      const isGeneration = url.includes("/api/music") && method === "POST" && action !== "status" && action !== "balance";
+      const startedAt = Date.now();
+      if (isGeneration) {
+        // Start the visible control BEFORE waiting for the provider response.
+        // This guarantees the user sees that the job is actually running.
+        renderStart("pending", startedAt, true);
+      }
+
       const response = await originalFetch(...args);
-      try {
-        const request = args[0];
-        const url = typeof request === "string" ? request : request instanceof Request ? request.url : "";
-        const init = args[1];
-        const method = (init?.method || (request instanceof Request ? request.method : "GET")).toUpperCase();
-        let action = "";
-        if (typeof init?.body === "string") {
-          try { action = String((JSON.parse(init.body) as Record<string, unknown>)?.action || ""); } catch { /* not JSON */ }
-        }
-        if (url.includes("/api/music") && method === "POST" && action !== "status" && action !== "balance") {
-          const clone = response.clone();
-          void clone.json().then((data: Record<string, unknown>) => {
-            const id = data?.taskId ? String(data.taskId) : "";
-            if (id) {
-              const created = Number(data?.createdAt || 0) * 1000;
-              start(id, created);
-              window.dispatchEvent(new CustomEvent("salvian-generation-started", { detail: { taskId: id, createdAt: created } }));
-              void check();
-            }
-          }).catch(() => undefined);
-        }
-      } catch (error) { console.error("SALVIAN FETCH MONITOR", error); }
+
+      if (isGeneration) {
+        const clone = response.clone();
+        void clone.json().then((data: Record<string, unknown>) => {
+          const id = data?.taskId ? String(data.taskId) : "";
+          const createdRaw = Number(data?.createdAt || 0);
+          const created = createdRaw > 0 ? createdRaw * 1000 : startedAt;
+          if (id) {
+            attachTask(id, created);
+            window.dispatchEvent(new CustomEvent("salvian-generation-started", { detail: { taskId: id, createdAt: created } }));
+            void check();
+          } else if (!data?.success) {
+            setIsFailed(true);
+            setStatus("failed");
+          } else {
+            // Keep the control visible and explicit instead of silently disappearing.
+            setIsFailed(true);
+            setStatus("error");
+            setTaskId("pending");
+          }
+        }).catch(() => {
+          if (!stopped) { setIsFailed(true); setStatus("error"); }
+        });
+      }
       return response;
     };
 
     window.fetch = patchedFetch;
     const existing = getCookie("salvian_generation_task");
-    if (existing) start(existing);
+    if (existing) renderStart(existing);
     void check();
     pollTimer = window.setInterval(() => void check(), 5000);
     clockTimer = window.setInterval(() => {
@@ -172,15 +197,16 @@ export default function GenerationMonitorV2() {
   }, []);
 
   if (!taskId) return null;
+  const pendingWithoutId = taskId === "pending";
   return (
     <div className="fixed bottom-20 left-3 right-3 z-[70] mx-auto max-w-xl rounded-2xl border border-violet-400/30 bg-[#111116]/98 p-4 shadow-2xl backdrop-blur-xl">
       <div className="flex items-start gap-3">
         <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-violet-500/15 text-violet-200">{isFailed ? <AlertTriangle size={21}/> : done ? <CheckCircle2 size={21}/> : <LoaderCircle size={21} className="animate-spin"/>}</div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2 text-sm font-bold"><div className="flex items-center gap-2"><Music2 size={15}/>{isFailed ? "Pembuatan lagu gagal" : done ? "Lagu selesai" : "Pembuatan lagu"}</div><div className="flex items-center gap-1 text-xs font-semibold text-violet-200"><Clock3 size={13}/> {duration(elapsed)}</div></div>
-          <p className="mt-1 text-xs leading-5 text-zinc-400">{isFailed ? "Mesin musik melaporkan proses gagal. Hasil tidak dianggap selesai." : done ? "Lagu selesai. Project sudah diperbarui di Library." : "Proses sedang dipantau. Kontrol tetap aktif meskipun halaman di-refresh."}</p>
+          <div className="flex items-center justify-between gap-2 text-sm font-bold"><div className="flex items-center gap-2"><Music2 size={15}/>{isFailed ? "Pembuatan lagu bermasalah" : done ? "Lagu selesai" : "Pembuatan lagu"}</div><div className="flex items-center gap-1 text-xs font-semibold text-violet-200"><Clock3 size={13}/> {duration(elapsed)}</div></div>
+          <p className="mt-1 text-xs leading-5 text-zinc-400">{isFailed ? (pendingWithoutId ? "Server belum menerima Task ID dari mesin musik. Jangan tekan Buat Lagu lagi; pemeriksaan akan dilakukan pada respons berikutnya." : "Mesin musik melaporkan proses gagal. Hasil tidak dianggap selesai.") : done ? "Lagu selesai. Project sudah diperbarui di Library." : "Proses sedang dipantau. Kontrol tetap aktif meskipun halaman di-refresh."}</p>
           {!done && !isFailed && <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full w-1/3 animate-[pulse_1.5s_ease-in-out_infinite] rounded-full bg-violet-400"/></div>}
-          <div className="mt-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500"><span>{stage(status)}</span><span>Task {taskId}</span></div>
+          <div className="mt-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500"><span>{stage(status)}</span><span>{pendingWithoutId ? "Task menunggu respons" : `Task ${taskId}`}</span></div>
         </div>
       </div>
     </div>
