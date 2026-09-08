@@ -32,7 +32,16 @@ function findTaskId(value: unknown): string | null {
 }
 function findStatus(value: unknown): string { if (!value || typeof value !== "object") return "unknown"; const obj = value as Record<string, unknown>; for (const key of ["status", "state", "task_status", "taskStatus"]) if (obj[key] !== undefined && obj[key] !== null) return String(obj[key]).toLowerCase(); return "unknown"; }
 function isFinished(status: string) { return ["success", "succeeded", "completed", "complete", "done", "failed", "failure", "error", "timeout", "timedout", "timed_out", "cancelled", "canceled"].some(v => status.toLowerCase().includes(v)); }
-function isFailure(status: string) { return ["failed", "failure", "error", "timeout", "timedout", "timed_out", "cancelled", "canceled"].some(v => status.toLowerCase().includes(v)); }
+function decodeJwtSubject(auth: string): string | null {
+  try {
+    const token = auth.replace(/^Bearer\s+/i, "").split(".")[1];
+    if (!token) return null;
+    const normalized = token.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(token.length / 4) * 4, "=");
+    const payload = JSON.parse(Buffer.from(normalized, "base64").toString("utf8"));
+    const sub = payload?.sub;
+    return typeof sub === "string" && sub.trim() ? sub.trim() : null;
+  } catch { return null; }
+}
 
 async function neonRpc(auth: string, functionName: string, body: Record<string, unknown> = {}) {
   const response = await fetch(`${DATA_API}/rpc/${functionName}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json" }, body: JSON.stringify(body), cache: "no-store" });
@@ -44,33 +53,31 @@ async function consumeCredits(auth: string) { return neonRpc(auth, "salvian_cons
 async function refundCredits(auth: string) { return neonRpc(auth, "salvian_refund_credits", { p_amount: MUSIC_CREDIT_COST, p_description: "Refund pembuatan lagu SALVIAN AI MUSIC" }); }
 
 async function createLibraryProject(auth: string, body: Record<string, unknown>) {
-  const insertBody = {
-    user_id: undefined,
-    title: body.p_title,
-    lyrics: body.p_lyrics,
-    style: body.p_style || "",
-    model: body.p_model || "v5.5 Pro",
-    task_id: body.p_task_id || null,
-    status: body.p_status || "processing",
-    audio_url: body.p_audio_url || null,
-    provider_data: body.p_provider_data || null,
-    updated_at: new Date().toISOString()
-  };
-  delete (insertBody as Record<string, unknown>).user_id;
+  const userId = decodeJwtSubject(auth);
+  if (userId) {
+    const insertBody = {
+      user_id: userId,
+      title: body.p_title,
+      lyrics: body.p_lyrics,
+      style: body.p_style || "",
+      model: body.p_model || "v5.5 Pro",
+      task_id: body.p_task_id || null,
+      status: body.p_status || "processing",
+      audio_url: body.p_audio_url || null,
+      provider_data: body.p_provider_data || null,
+      updated_at: new Date().toISOString()
+    };
+    const direct = await fetch(`${DATA_API}/salvian_music_projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(insertBody),
+      cache: "no-store"
+    });
+    const directData = await direct.json().catch(() => null);
+    if (direct.ok) return { response: direct, data: directData };
+    console.error("MUSIC LIBRARY DIRECT INSERT", direct.status, directData);
+  }
 
-  // First use the normal authenticated Data API insert. This keeps RLS active
-  // and avoids depending on the newly-created RPC being present in PostgREST's
-  // schema cache.
-  const direct = await fetch(`${DATA_API}/salvian_music_projects`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" },
-    body: JSON.stringify(insertBody),
-    cache: "no-store"
-  });
-  const directData = await direct.json().catch(() => null);
-  if (direct.ok) return { response: direct, data: directData };
-
-  console.error("MUSIC LIBRARY DIRECT INSERT", direct.status, directData);
   const fallback = await neonRpc(auth, "salvian_create_music_project", body);
   if (!fallback.response.ok) console.error("MUSIC LIBRARY RPC INSERT", fallback.response.status, fallback.data);
   return fallback;
@@ -112,7 +119,7 @@ export async function POST(request: NextRequest) {
         if (!patch.ok) console.error("MUSIC LIBRARY STATUS ERROR", patch.status, await patch.text().catch(() => ""));
       } catch (libraryError) { console.error("MUSIC LIBRARY STATUS ERROR", libraryError); }
 
-      const result = NextResponse.json({ success: true, taskId: String(taskId), status, audio, url: audio, finished, failed: isFailure(status), data });
+      const result = NextResponse.json({ success: true, taskId: String(taskId), status, audio, url: audio, finished, failed: ["failed", "failure", "error", "timeout", "timedout", "timed_out", "cancelled", "canceled"].some(v => status.includes(v)), data });
       if (finished) result.cookies.set("salvian_generation_task", "", { path: "/", maxAge: 0 });
       return result;
     }
@@ -130,8 +137,6 @@ export async function POST(request: NextRequest) {
     try {
       const requestedModel = String(body?.model || "auto").trim();
       const providerModel = MUREKA_MODELS.has(requestedModel) ? requestedModel : "auto";
-      // One result per request for the stable MVP: it is faster and avoids
-      // hiding the real generation state behind two simultaneous outputs.
       const payload: Record<string, unknown> = { lyrics: lyrics.slice(0, 5000), model: providerModel, n: 1, stream: false };
       if (style) payload.prompt = style.slice(0, 1024);
       if (body?.instrumental) payload.instrumental = true;
