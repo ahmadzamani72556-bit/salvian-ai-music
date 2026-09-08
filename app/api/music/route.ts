@@ -39,7 +39,7 @@ async function neonRpc(auth: string, functionName: string, body: Record<string, 
   return { response, data };
 }
 async function getCredits(auth: string) { return neonRpc(auth, "salvian_get_my_credits"); }
-async function consumeCredits(auth: string) { return neonRpc(auth, "salvian_consume_credits", { p_amount: MUSIC_CREDIT_COST, p_type: "MUSIC", p_description: "Pembuatan lagu SALVIAN AI MUSIC" }); }
+async function consumeCredits(auth: string) { return neonRpc(auth, "salvian_consume_credits", { p_amount: MUSIC_CREDIT_COST, p_type: "USAGE", p_description: "Pembuatan lagu SALVIAN AI MUSIC" }); }
 async function refundCredits(auth: string) { return neonRpc(auth, "salvian_refund_credits", { p_amount: MUSIC_CREDIT_COST, p_description: "Refund pembuatan lagu SALVIAN AI MUSIC" }); }
 async function libraryRequest(auth: string, method: "POST" | "PATCH", body: Record<string, unknown>, query = "") {
   return fetch(`${DATA_API}/salvian_music_projects${query}`, {
