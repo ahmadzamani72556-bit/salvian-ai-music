@@ -7,6 +7,7 @@ import { LoaderCircle, Music2, CheckCircle2, AlertTriangle, Clock3 } from "lucid
 const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
 const DATA = "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
 const neon = createClient({ auth: { url: AUTH }, dataApi: { url: DATA } });
+const ACTIVE_STATUSES = new Set(["preparing", "queued", "running", "streaming", "processing", "pending", "created"]);
 
 function getCookie(name: string) {
   if (typeof document === "undefined") return "";
@@ -45,38 +46,65 @@ export default function GenerationMonitor() {
     let timer: number | null = null;
     let clock: number | null = null;
 
-    const check = async () => {
-      const currentTask = getCookie("salvian_generation_task");
-      if (!currentTask) { if (!stopped) setTaskId(""); return; }
-      if (!stopped) setTaskId(currentTask);
+    const getJwt = async () => {
       try {
         const session = await neon.auth.getSession();
-        if (!session?.data?.user) return;
+        if (!session?.data?.user) return null;
         const authWithJwt = neon.auth as unknown as { getJWTToken?: (allowAnonymous?: boolean) => Promise<string | null> };
-        if (typeof authWithJwt.getJWTToken !== "function") return;
-        const jwt = await authWithJwt.getJWTToken(false);
+        if (typeof authWithJwt.getJWTToken !== "function") return null;
+        return await authWithJwt.getJWTToken(false);
+      } catch { return null; }
+    };
+
+    const findActiveTask = async (jwt: string) => {
+      const res = await fetch("/api/projects", { headers: { Authorization: `Bearer ${jwt}` }, cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(data.projects)) return null;
+      const active = data.projects.find((project: Record<string, unknown>) => {
+        const task = project.task_id ? String(project.task_id) : "";
+        const state = String(project.status || "").toLowerCase();
+        return task && ACTIVE_STATUSES.has(state);
+      });
+      return active || null;
+    };
+
+    const check = async () => {
+      if (stopped) return;
+      try {
+        const jwt = await getJwt();
         if (!jwt) return;
+
+        // Do not depend on the browser cookie. Library is the source of truth,
+        // so the control reappears after refresh, navigation, or cookie loss.
+        let currentTask = getCookie("salvian_generation_task");
+        let libraryProject: Record<string, unknown> | null = null;
+        if (!currentTask) {
+          libraryProject = await findActiveTask(jwt);
+          currentTask = libraryProject?.task_id ? String(libraryProject.task_id) : "";
+          if (currentTask) {
+            document.cookie = `salvian_generation_task=${encodeURIComponent(currentTask)}; Max-Age=3600; Path=/; SameSite=Lax`;
+          }
+        }
+        if (!currentTask) { setTaskId(""); return; }
+        setTaskId(currentTask);
+
         const res = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "status", taskId: currentTask }), cache: "no-store" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || stopped) return;
 
-        const nextStatus = String(data.status || "preparing");
+        const nextStatus = String(data.status || libraryProject?.status || "preparing");
         const isFailed = Boolean(data.failed);
-        const createdMs = Number(data.createdAt || 0) * 1000;
+        const createdMs = Number(data.createdAt || 0) * 1000 || Number(libraryProject?.created_at || 0);
         if (createdMs > 0 && Number.isFinite(createdMs)) {
           setStartedAt(prev => prev ?? createdMs);
           setElapsed(Math.max(0, (Date.now() - createdMs) / 1000));
-        } else {
-          setStartedAt(prev => {
-            if (prev === null) { const now = Date.now(); setElapsed(0); return now; }
-            return prev;
-          });
+        } else if (!startedAt) {
+          setStartedAt(Date.now());
         }
         setStatus(nextStatus);
         setFailed(isFailed);
 
-        // IMPORTANT: only a terminal Mureka status ends the monitor.
-        // A stream_url/audio-like URL must never make a preparing/running task look finished.
+        // Only a terminal Mureka status ends the control.
         if (data.finished === true) {
           clearCookie("salvian_generation_task");
           setDone(!isFailed);
@@ -104,11 +132,11 @@ export default function GenerationMonitor() {
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 text-sm font-bold">
-            <div className="flex items-center gap-2"><Music2 size={15} />{failed ? "Pembuatan lagu gagal" : done ? "Lagu selesai" : "Pembuatan lagu"}</div>
+            <div className="flex items-center gap-2"><Music2 size={15} />{failed ? "Pembuatan lagu gagal" : done ? "Lagu selesai" : "Kontrol pembuatan lagu"}</div>
             <div className="flex items-center gap-1 text-xs font-semibold text-violet-200"><Clock3 size={13} /> {formatDuration(elapsed)}</div>
           </div>
           <p className="mt-1 text-xs leading-5 text-zinc-400">
-            {failed ? "Mesin musik melaporkan proses gagal. Hasil tidak dianggap selesai." : done ? "Lagu selesai. Project sudah diperbarui di Library." : "Jangan tutup proses. Anda boleh berpindah halaman atau refresh; kontrol ini akan melanjutkan pemantauan."}
+            {failed ? "Mesin musik melaporkan proses gagal. Hasil tidak dianggap selesai." : done ? "Lagu selesai. Project sudah diperbarui di Library." : "Proses sedang berjalan. Kontrol ini tetap aktif walaupun halaman di-refresh atau Anda berpindah halaman."}
           </p>
           {!done && !failed && <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full w-1/3 animate-[pulse_1.5s_ease-in-out_infinite] rounded-full bg-violet-400" /></div>}
           <div className="mt-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500"><span>{stageLabel(status)}</span><span>Task {taskId}</span></div>
