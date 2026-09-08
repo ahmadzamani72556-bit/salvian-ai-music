@@ -167,10 +167,15 @@ export async function POST(request: NextRequest) {
 
     const credit = await rpc(auth, "salvian_consume_credits", { p_amount: MUSIC_CREDIT_COST, p_type: "USAGE", p_description: "Pembuatan instrumental SALVIAN AI MUSIC" });
     const creditRow = Array.isArray(credit.data) ? credit.data[0] : credit.data;
-    if (!credit.response.ok || creditRow?.success !== true) return NextResponse.json({ success: false, error: creditRow?.message || "Kredit tidak cukup.", credits: Number(creditRow?.balance || 0) }, { status: credit.response.status === 402 ? 402 : 503 });
+    if (!credit.response.ok || creditRow?.success !== true) return NextResponse.json({ success: false, error: creditRow?.message || "Kredit tidak cukup.", credits: Number(creditRow?.balance || 0), creditCost: MUSIC_CREDIT_COST }, { status: credit.response.status === 402 ? 402 : 503 });
 
-    let providerSucceeded = false;
-    let shouldRefund = false;
+    let providerAccepted = false;
+    let shouldRefundTerminalFailure = false;
+    let terminalTaskId = "";
+    let terminalStatus = "";
+    let terminalAudio: string | null = null;
+    let terminalProviderData: unknown = null;
+
     try {
       const requested = String(body?.model || "auto");
       const model = MODELS.has(requested) ? requested : "auto";
@@ -183,12 +188,16 @@ export async function POST(request: NextRequest) {
 
       const id = taskId(generated.data);
       if (!id) return NextResponse.json({ success: false, error: "Mureka tidak mengembalikan Task ID. Kredit akan dikembalikan.", data: generated.data }, { status: 502 });
-      providerSucceeded = true;
+      providerAccepted = true;
 
       const s = status(generated.data);
       const bad = failure(s);
       const a = terminal(s) && !bad ? audio(generated.data) : null;
-      shouldRefund = terminal(s) && bad;
+      shouldRefundTerminalFailure = terminal(s) && bad;
+      terminalTaskId = id;
+      terminalStatus = s;
+      terminalAudio = a;
+      terminalProviderData = generated.data;
       const saved = await saveLibrary(auth, {
         title: String(body?.title || "Instrumental SALVIAN AI").slice(0, 160),
         lyrics: "[Instrumental]",
@@ -200,18 +209,21 @@ export async function POST(request: NextRequest) {
         providerData: generated.data,
       });
 
-      const result = NextResponse.json({ success: true, title: String(body?.title || "Instrumental SALVIAN AI"), taskId: id, status: s, audio: a, credits: Number(creditRow?.balance || 0), librarySaved: saved.ok, data: generated.data });
+      const result = NextResponse.json({ success: true, title: String(body?.title || "Instrumental SALVIAN AI"), taskId: id, status: s, audio: a, credits: Number(creditRow?.balance || 0), creditCost: MUSIC_CREDIT_COST, librarySaved: saved.ok, data: generated.data });
       if (!terminal(s)) {
         result.cookies.set("salvian_generation_task", id, { path: "/", maxAge: 3600, sameSite: "lax" });
         result.cookies.set("salvian_generation_endpoint", "/api/music/instrumental", { path: "/", maxAge: 3600, sameSite: "lax" });
       }
       return result;
     } finally {
-      if (!providerSucceeded || shouldRefund) {
+      if (!providerAccepted) {
+        try { await refund(auth); } catch (e) { console.error("INSTRUMENTAL REFUND", e); }
+      } else if (shouldRefundTerminalFailure && terminalTaskId) {
         try {
-          await refund(auth);
+          const patched = await patchLibrary(auth, terminalTaskId, terminalStatus, terminalAudio, terminalProviderData);
+          if (!patched) console.error("INSTRUMENTAL TERMINAL REFUND DEFERRED: project not found");
         } catch (e) {
-          console.error("INSTRUMENTAL REFUND", e);
+          console.error("INSTRUMENTAL TERMINAL REFUND DEFERRED", e);
         }
       }
     }
