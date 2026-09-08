@@ -5,7 +5,8 @@ import { LoaderCircle, Music2, CheckCircle2, AlertTriangle, Clock3 } from "lucid
 import { createClient, BetterAuthVanillaAdapter } from "@neondatabase/neon-js";
 
 const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
-const neon = createClient({ auth: { url: AUTH, adapter: BetterAuthVanillaAdapter() } });
+const DATA = "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
+const neon = createClient({ auth: { url: AUTH, adapter: BetterAuthVanillaAdapter() }, dataApi: { url: DATA } });
 const TERMINAL = ["succeeded", "success", "completed", "complete", "done", "failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"];
 const FAILURE = ["failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"];
 const CONTROL_LIMIT_SECONDS = 15 * 60;
