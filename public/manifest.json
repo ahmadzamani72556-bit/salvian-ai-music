@@ -1,0 +1,13 @@
+{
+  "name": "SALVIAN AI MUSIC STUDIO",
+  "short_name": "SALVIAN MUSIC",
+  "description": "Studio AI musik kelas premium SALVIAN AI MUSIC.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#02030a",
+  "theme_color": "#7c3aed",
+  "icons": [
+    { "src": "/salvian-ai-logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
