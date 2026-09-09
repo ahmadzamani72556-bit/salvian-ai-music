@@ -156,7 +156,7 @@ export default function PremiumMusicStudio() {
     try {
       const title = (lyrics.split("\n").find(Boolean) || `${model} Music`).replace(/^\[.*?\]\s*/, "").slice(0, 70);
       const style = `${prompt.slice(0, 900)}${prompt ? ", " : ""}${language}, ${tempo} BPM, ${gender} vocal`;
-      const res = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ title, lyrics: lyrics.trim(), style, model: modelMap[model], n: 1, instrumental, gender, reference_id: referenceId || undefined, vocal_id: vocalId || undefined }) });
+      const res = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ title, lyrics: lyrics.trim(), style, model: modelMap[model], n: 1, stream: true, instrumental, gender, reference_id: referenceId || undefined, vocal_id: vocalId || undefined }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Gagal membuat musik.");
       if (typeof data.credits === "number") setCredits(data.credits);

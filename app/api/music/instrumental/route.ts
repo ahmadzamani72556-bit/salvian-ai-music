@@ -180,7 +180,7 @@ export async function POST(request: NextRequest) {
       const generated = await provider("/v1/instrumental/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt, n: 1, stream: false }),
+        body: JSON.stringify({ model, prompt, n: 1, stream: true }),
       });
       if (!generated.response.ok) return NextResponse.json({ success: false, error: generated.data?.error?.message || generated.data?.message || `Mureka API ${generated.response.status}`, data: generated.data }, { status: generated.response.status });
 

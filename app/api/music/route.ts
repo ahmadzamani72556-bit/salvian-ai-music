@@ -216,7 +216,7 @@ export async function POST(request: NextRequest) {
       const model = MODELS.has(requestedModel) ? requestedModel : "auto";
       const requestedN = Number(body?.n);
       const n = Number.isFinite(requestedN) ? Math.min(Math.max(Math.floor(requestedN), 1), 3) : 1;
-      const stream = body?.stream === true;
+      const stream = body?.stream !== false;
       // This mirrors the working CREATOR request shape: model, n, stream,
       // lyrics, prompt, gender and optional reference/vocal/melody IDs.
       const musicRequest: Record<string, unknown> = { lyrics: lyrics.slice(0, 5000), model, n, stream };
