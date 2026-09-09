@@ -20,6 +20,18 @@ async function verifyAuth(auth: string | null) {
   } catch { return false; }
 }
 
+function classifyOpenAIError(status: number, data: any) {
+  const code = String(data?.error?.code || "").toLowerCase();
+  const type = String(data?.error?.type || "").toLowerCase();
+  if (code === "credit_balance_exhausted") return "Kredit API OpenAI habis. Isi kembali saldo API OpenAI terlebih dahulu.";
+  if (code === "organization_usage_limit_exceeded") return "Batas penggunaan API OpenAI organisasi tercapai. Naikkan approved usage limit jika diperlukan.";
+  if (code === "organization_spend_limit_exceeded") return "Batas pengeluaran organisasi OpenAI tercapai.";
+  if (code === "project_spend_limit_exceeded") return "Batas pengeluaran project OpenAI tercapai.";
+  if (status === 429 && (code === "rate_limit_exceeded" || type === "rate_limit_error")) return "Batas request/token OpenAI sedang tercapai. Tunggu sebentar lalu coba lagi.";
+  if (status === 401) return "Konfigurasi OpenAI di server tidak valid.";
+  return "Layanan Asisten AI sedang bermasalah. Silakan coba lagi.";
+}
+
 export async function POST(request: Request) {
   try {
     const auth = request.headers.get("authorization");
@@ -48,8 +60,9 @@ export async function POST(request: Request) {
     let data: any = {};
     try { data = JSON.parse(raw); } catch {}
     if (!response.ok) {
-      console.error("SALVIAN assistant OpenAI error", response.status, raw.slice(0, 1000));
-      return NextResponse.json({ error: response.status === 401 ? "Konfigurasi OpenAI di server tidak valid." : response.status === 429 ? "Asisten AI sedang mencapai batas penggunaan. Silakan coba lagi sebentar." : "Layanan Asisten AI sedang bermasalah. Silakan coba lagi." }, { status: 502 });
+      const providerCode = String(data?.error?.code || data?.error?.type || "unknown");
+      console.error("SALVIAN assistant OpenAI error", response.status, providerCode, raw.slice(0, 1000));
+      return NextResponse.json({ error: classifyOpenAIError(response.status, data), providerCode: providerCode === "unknown" ? undefined : providerCode }, { status: response.status === 429 ? 429 : 502 });
     }
     const answer = typeof data.output_text === "string" ? data.output_text.trim() : Array.isArray(data.output) ? data.output.flatMap((item: any) => Array.isArray(item?.content) ? item.content.map((part: any) => part?.text).filter(Boolean) : []).join("\n").trim() : "";
     if (!answer) return NextResponse.json({ error: "Asisten AI tidak menghasilkan jawaban." }, { status: 502 });
