@@ -55,21 +55,20 @@ export default function AiAssistant() {
   const copyReply = async (content: string, index: number) => {
     try {
       await navigator.clipboard.writeText(content);
-      setCopiedIndex(index);
-      window.setTimeout(() => setCopiedIndex(current => current === index ? null : current), 1600);
     } catch {
       const textarea = document.createElement("textarea");
       textarea.value = content;
       textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
+      textarea.style.left = "-9999px";
+      textarea.style.top = "0";
       document.body.appendChild(textarea);
       textarea.focus();
       textarea.select();
       document.execCommand("copy");
       textarea.remove();
-      setCopiedIndex(index);
-      window.setTimeout(() => setCopiedIndex(current => current === index ? null : current), 1600);
     }
+    setCopiedIndex(index);
+    window.setTimeout(() => setCopiedIndex(current => current === index ? null : current), 1600);
   };
 
   return (
@@ -98,19 +97,23 @@ export default function AiAssistant() {
             <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-6">
               {messages.map((item, index) => (
                 <div key={index} className={item.role === "user" ? "flex justify-end" : "flex justify-start"}>
-                  <div className={item.role === "user" ? "max-w-[88%] rounded-2xl rounded-br-md bg-violet-500/20 px-4 py-3 text-sm leading-6 text-violet-50" : "max-w-[92%] rounded-2xl rounded-bl-md border border-white/8 bg-black/20 px-4 py-3 text-sm leading-6 text-zinc-200"}>
-                    <div className="whitespace-pre-wrap break-words">{item.content}</div>
+                  <div className={item.role === "user" ? "max-w-[88%] rounded-2xl rounded-br-md bg-violet-500/20 px-4 py-3 text-sm leading-6 text-violet-50" : "max-w-[94%] rounded-2xl rounded-bl-md border border-white/8 bg-black/20 px-4 py-3 text-sm leading-6 text-zinc-200"}>
                     {item.role === "assistant" && (
-                      <button
-                        type="button"
-                        onClick={() => copyReply(item.content, index)}
-                        aria-label="Salin jawaban Asisten AI"
-                        className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 transition hover:bg-white/10 hover:text-white"
-                      >
-                        {copiedIndex === index ? <Check size={14} /> : <Copy size={14} />}
-                        {copiedIndex === index ? "Tersalin" : "Salin"}
-                      </button>
+                      <div className="mb-2 flex items-center justify-between gap-3 border-b border-white/6 pb-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Jawaban Asisten AI</span>
+                        <button
+                          type="button"
+                          onClick={() => copyReply(item.content, index)}
+                          aria-label="Salin hanya jawaban ini"
+                          title="Salin jawaban ini"
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-300 transition hover:bg-white/10 hover:text-white"
+                        >
+                          {copiedIndex === index ? <Check size={13} /> : <Copy size={13} />}
+                          {copiedIndex === index ? "Tersalin" : "Salin"}
+                        </button>
+                      </div>
                     )}
+                    <div className="whitespace-pre-wrap break-words select-text">{item.content}</div>
                   </div>
                 </div>
               ))}
