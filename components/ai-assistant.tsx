@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { MessageCircle, Send, Sparkles, X } from "lucide-react";
+import { Check, Copy, MessageCircle, Send, Sparkles, X } from "lucide-react";
 import { createClient, BetterAuthVanillaAdapter } from "@neondatabase/neon-js";
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -19,6 +19,7 @@ export default function AiAssistant() {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([welcome]);
 
   const ask = async (event?: FormEvent) => {
@@ -51,6 +52,26 @@ export default function AiAssistant() {
     }
   };
 
+  const copyReply = async (content: string, index: number) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedIndex(index);
+      window.setTimeout(() => setCopiedIndex(current => current === index ? null : current), 1600);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = content;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+      setCopiedIndex(index);
+      window.setTimeout(() => setCopiedIndex(current => current === index ? null : current), 1600);
+    }
+  };
+
   return (
     <>
       <button
@@ -78,7 +99,18 @@ export default function AiAssistant() {
               {messages.map((item, index) => (
                 <div key={index} className={item.role === "user" ? "flex justify-end" : "flex justify-start"}>
                   <div className={item.role === "user" ? "max-w-[88%] rounded-2xl rounded-br-md bg-violet-500/20 px-4 py-3 text-sm leading-6 text-violet-50" : "max-w-[92%] rounded-2xl rounded-bl-md border border-white/8 bg-black/20 px-4 py-3 text-sm leading-6 text-zinc-200"}>
-                    {item.content}
+                    <div className="whitespace-pre-wrap break-words">{item.content}</div>
+                    {item.role === "assistant" && (
+                      <button
+                        type="button"
+                        onClick={() => copyReply(item.content, index)}
+                        aria-label="Salin jawaban Asisten AI"
+                        className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 transition hover:bg-white/10 hover:text-white"
+                      >
+                        {copiedIndex === index ? <Check size={14} /> : <Copy size={14} />}
+                        {copiedIndex === index ? "Tersalin" : "Salin"}
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
