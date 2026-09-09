@@ -58,20 +58,26 @@ for (const [from, to] of clientPatches) {
 
 const monitorPatches = [
   ['const CONTROL_LIMIT_SECONDS = 15 * 60;', 'const CONTROL_LIMIT_SECONDS = 5 * 60;'],
-  ['Batas kontrol 15 menit tercapai.', 'Batas kontrol 5 menit tercapai.'],
+  ['const [elapsed, setElapsed] = useState(0);', 'const [elapsed, setElapsed] = useState(0);\n  const [controlReached, setControlReached] = useState(false);'],
+  ['const begin = () => { current = { id: "pending", startedAt: Date.now() }; setTaskId("pending"); setStatus("preparing"); setDone(false); setIsFailed(false); setElapsed(0); };', 'const begin = () => { current = { id: "pending", startedAt: Date.now() }; setTaskId("pending"); setStatus("preparing"); setDone(false); setIsFailed(false); setElapsed(0); setControlReached(false); };'],
+  ['const attach = (id: string, createdAt = 0) => { if (!id || stopped) return; const startedAt = createdAt > 0 ? createdAt : current?.startedAt || Date.now(); current = { id, startedAt }; setCookie("salvian_generation_task", id); setTaskId(id); setStatus("preparing"); setDone(false); setIsFailed(false); setElapsed(Math.max(0, (Date.now() - startedAt) / 1000)); };', 'const attach = (id: string, createdAt = 0) => { if (!id || stopped) return; const startedAt = createdAt > 0 ? createdAt : current?.startedAt || Date.now(); current = { id, startedAt }; setCookie("salvian_generation_task", id); setTaskId(id); setStatus("preparing"); setDone(false); setIsFailed(false); setControlReached(false); setElapsed(Math.max(0, (Date.now() - startedAt) / 1000)); };'],
+  ['if (seconds >= CONTROL_LIMIT_SECONDS && current.id !== "pending") finishAndClear(true, "timeout");', 'if (seconds >= CONTROL_LIMIT_SECONDS && current.id !== "pending") setControlReached(true);'],
+  ['{isFailed ? (status === "timeout" ? "Batas kontrol 15 menit tercapai." : "Mesin musik melaporkan proses gagal.") : done ? "Musik selesai dan project diperbarui di Library." : "Proses dipantau otomatis setiap 5 detik."}', '{isFailed ? (status === "timeout" ? "Batas kontrol 5 menit tercapai." : "Mesin musik melaporkan proses gagal.") : done ? "Musik selesai dan project diperbarui di Library." : controlReached ? "Batas kontrol 5 menit tercapai. Mesin Mureka masih memproses; pemantauan tetap berjalan." : "Proses dipantau otomatis setiap 5 detik."}'],
   ['<span>15:00</span>', '<span>05:00</span>'],
 ];
 
 for (const [from, to] of monitorPatches) {
   if (!monitor.includes(from)) {
     if (from.includes('15 * 60') && monitor.includes('5 * 60')) continue;
-    if (from.includes('15 menit') && monitor.includes('5 menit')) continue;
+    if (from.includes('controlReached') && monitor.includes('controlReached')) continue;
+    if (from.includes('Batas kontrol 15 menit') && monitor.includes('Batas kontrol 5 menit')) continue;
+    if (from.includes('seconds >= CONTROL_LIMIT_SECONDS') && monitor.includes('setControlReached(true)')) continue;
     if (from.includes('15:00') && monitor.includes('05:00')) continue;
-    throw new Error("Required Music monitor patch pattern not found. Refusing to build with old 15-minute control limit.");
+    throw new Error("Required Music monitor patch pattern not found. Refusing to build with stale five-minute control logic.");
   }
   monitor = monitor.replace(from, to);
 }
 
 fs.writeFileSync(clientPath, client);
 fs.writeFileSync(monitorPath, monitor);
-console.log("SALVIAN Music UI hardening applied: automatic parent-account sync, dynamic credit cost, 5-minute generation control");
+console.log("SALVIAN Music UI hardening applied: automatic parent-account sync, dynamic credit cost, five-minute control warning with continued provider polling");
