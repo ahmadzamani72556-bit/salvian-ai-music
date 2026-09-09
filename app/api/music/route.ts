@@ -4,8 +4,8 @@ import { createMusicProjectServer, refundMusicCreditsServer, updateMusicProjectS
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-// SALVIAN AI MUSIC uses its own direct Mureka path.
-// SALVIAN AI CREATOR remains a separate application.
+// Use the same direct Mureka provider path as SALVIAN AI CREATOR.
+// Authentication, credits, and Library remain owned by SALVIAN AI MUSIC.
 const MUREKA_BASE_URL = process.env.MUREKA_BASE_URL || "https://api.mureka.ai";
 const MUREKA_API_KEY = process.env.MUREKA_API_KEY || process.env.MUSIC_API_KEY;
 const DATA_API = process.env.NEON_DATA_API_URL || "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
@@ -27,8 +27,9 @@ function findAudio(value: unknown, depth = 0): string | null {
   }
   if (typeof value !== "object") return null;
   const obj = value as Record<string, unknown>;
-  for (const key of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl"]) {
-    const found = cleanUrl(obj[key]); if (found) return found;
+  for (const key of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "url"]) {
+    const found = cleanUrl(obj[key]);
+    if (found) return found;
   }
   for (const key of ["audio", "choices", "songs", "outputs", "results", "data"]) {
     if (obj[key]) { const found = findAudio(obj[key], depth + 1); if (found) return found; }
@@ -98,9 +99,6 @@ async function saveProject(auth: string, body: Record<string, unknown>) {
     const data = await direct.json().catch(() => null);
     if (direct.ok) return { ok: true, data };
 
-    // Recovery path: if the authenticated Data API insert fails after Mureka has
-    // already accepted the task, save it through the privileged server connection.
-    // This keeps the task trackable and prevents a paid task from becoming orphaned.
     try {
       const recovered = await createMusicProjectServer(userId, {
         title: String(body.title || "Salvian AI Song"),
@@ -160,12 +158,8 @@ export async function POST(request: NextRequest) {
     if (action === "status") {
       const taskId = String(body?.taskId || body?.task_id || body?.id || "");
       if (!taskId) return NextResponse.json({ success: false, error: "Task ID belum dikirim." }, { status: 400 });
-
-      // Never query Mureka for a task unless that task belongs to this SALVIAN user.
-      // This is defense-in-depth even though the Library table also has RLS.
       const owned = await ownsTask(auth, taskId);
       if (!owned) return NextResponse.json({ success: false, error: "Task tidak ditemukan pada Library akun ini." }, { status: 403 });
-
       const q = await provider(`/v1/song/query/${encodeURIComponent(taskId)}`, { method: "GET" });
       if (!q.response.ok) return NextResponse.json({ success: false, taskId, error: q.data?.error?.message || q.data?.message || q.data?.error || `Mureka Query ${q.response.status}`, data: q.data }, { status: q.response.status });
       const status = findStatus(q.data);
@@ -198,7 +192,12 @@ export async function POST(request: NextRequest) {
     try {
       const requestedModel = String(body?.model || "auto").trim();
       const model = MODELS.has(requestedModel) ? requestedModel : "auto";
-      const musicRequest: Record<string, unknown> = { lyrics: lyrics.slice(0, 5000), model, n: 1, stream: false };
+      const requestedN = Number(body?.n);
+      const n = Number.isFinite(requestedN) ? Math.min(Math.max(Math.floor(requestedN), 1), 3) : 1;
+      const stream = body?.stream === true;
+      // This mirrors the working CREATOR request shape: model, n, stream,
+      // lyrics, prompt, gender and optional reference/vocal/melody IDs.
+      const musicRequest: Record<string, unknown> = { lyrics: lyrics.slice(0, 5000), model, n, stream };
       const prompt = style.slice(0, 1024);
       if (prompt) musicRequest.prompt = prompt;
       const gender = String(body?.gender || "").toLowerCase();
@@ -209,6 +208,7 @@ export async function POST(request: NextRequest) {
         if (body?.melody_id) musicRequest.melody_id = String(body.melody_id);
       }
 
+      console.log("MUREKA GENERATE", { model, n, stream, promptLength: prompt.length });
       const generated = await provider("/v1/song/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(musicRequest) });
       if (!generated.response.ok) return NextResponse.json({ success: false, error: generated.data?.error?.message || generated.data?.message || generated.data?.error || `Mureka API ${generated.response.status}`, data: generated.data }, { status: generated.response.status });
 
@@ -226,10 +226,8 @@ export async function POST(request: NextRequest) {
       terminalAudio = audio;
       terminalProviderData = generated.data;
 
-      const saved = await saveProject(auth, { title: String(body?.title || "Salvian AI Song").slice(0, 160), lyrics, style, model: String(body?.model || model).slice(0, 80), taskId, status, audio, providerData: generated.data });
+      const saved = await saveProject(auth, { title: String(body?.title || "Salvian AI Song").slice(0, 160), lyrics, style, model, taskId, status, audio, providerData: generated.data });
       if (!saved.ok) {
-        // The provider accepted the task but the Library could not persist it.
-        // Refund immediately so the user is not charged for an untrackable task.
         try { await refund(auth); } catch (e) { console.error("MUSIC ORPHAN TASK REFUND ERROR", e); }
         return NextResponse.json({ success: false, error: "Task Mureka berhasil dibuat tetapi Library gagal menyimpan task. Kredit sudah dikembalikan.", taskId, librarySaved: false }, { status: 503 });
       }
