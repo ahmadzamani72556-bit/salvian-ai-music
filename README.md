@@ -28,3 +28,7 @@ The real audio generation engine is kept behind an integration layer. It will on
 `OPENAI_API_KEY` enables the server-side lyric assistant. `OPENAI_LYRICS_MODEL` can optionally select the text model.
 
 Never expose API keys in browser code.
+
+## Deployment
+
+SALVIAN AI MUSIC production deployments are tracked from the `main` branch through the connected Vercel project.
