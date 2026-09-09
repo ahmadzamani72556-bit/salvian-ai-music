@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const DATA_API = process.env.NEON_DATA_API_URL || "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
+const CREATOR_ASSISTANT_URL = "https://salvian-ai-creator.vercel.app/api/assistant";
 
 const SYSTEM_PROMPT = `Anda adalah Asisten AI resmi di SALVIAN AI MUSIC.
 Tugas utama Anda adalah membantu creator memahami dan menggunakan SALVIAN AI MUSIC dengan bahasa Indonesia yang ramah, singkat, jelas, dan praktis.
@@ -24,6 +25,19 @@ async function verifyAuth(auth: string | null) {
   } catch {
     return false;
   }
+}
+
+async function callCreatorAssistant(auth: string, message: string, history: unknown[]) {
+  const response = await fetch(CREATOR_ASSISTANT_URL, {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ message, messages: history }),
+    cache: "no-store",
+  });
+  const raw = await response.text();
+  let data: any = {};
+  try { data = JSON.parse(raw); } catch {}
+  return { response, data, raw };
 }
 
 function classifyOpenAIError(status: number, data: any) {
@@ -54,10 +68,6 @@ export async function POST(request: Request) {
     if (!message) return NextResponse.json({ error: "Tulis pertanyaan Anda terlebih dahulu." }, { status: 400 });
     if (message.length > 2000) return NextResponse.json({ error: "Pertanyaan terlalu panjang. Ringkas pertanyaan Anda." }, { status: 400 });
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return NextResponse.json({ error: "Asisten AI belum aktif di server: OPENAI_API_KEY belum tersedia." }, { status: 503 });
-
-    const client = new OpenAI({ apiKey });
     const safeHistory = history
       .filter((item: unknown) => {
         if (!item || typeof item !== "object") return false;
@@ -70,26 +80,47 @@ export async function POST(request: Request) {
         content: item.content.slice(0, 5000),
       }));
 
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return NextResponse.json({ error: "Asisten AI belum aktif di server: OPENAI_API_KEY belum tersedia." }, { status: 503 });
+
+    const client = new OpenAI({ apiKey });
     safeHistory.push({ role: "user", content: message });
-
     const model = (process.env.OPENAI_ASSISTANT_MODEL || process.env.OPENAI_TEXT_MODEL || process.env.OPENAI_LYRICS_MODEL || "gpt-5.6-luna").trim();
-    const response = await client.responses.create({
-      model,
-      instructions: SYSTEM_PROMPT,
-      input: safeHistory,
-      max_output_tokens: 600,
-    });
 
-    const answer = response.output_text?.trim() || "";
-    if (!answer) return NextResponse.json({ error: "Asisten AI tidak menghasilkan jawaban." }, { status: 502 });
-    return NextResponse.json({ answer });
-  } catch (error: any) {
-    console.error("SALVIAN assistant OpenAI error", error);
-    const status = Number(error?.status || error?.statusCode || 0);
-    const data = { error: { code: error?.code, type: error?.type } };
-    return NextResponse.json(
-      { error: classifyOpenAIError(status || 500, data), providerCode: error?.code || error?.type || undefined },
-      { status: status >= 400 && status < 600 ? status : 500 }
-    );
+    try {
+      const response = await client.responses.create({
+        model,
+        instructions: SYSTEM_PROMPT,
+        input: safeHistory,
+        max_output_tokens: 600,
+      });
+      const answer = response.output_text?.trim() || "";
+      if (!answer) return NextResponse.json({ error: "Asisten AI tidak menghasilkan jawaban." }, { status: 502 });
+      return NextResponse.json({ answer });
+    } catch (error: any) {
+      const status = Number(error?.status || error?.statusCode || 0);
+      const code = String(error?.code || error?.type || "").toLowerCase();
+      const isBillingProblem = code === "billing_not_active" || code === "insufficient_quota" || code === "credit_balance_exhausted" || code === "organization_usage_limit_exceeded" || code === "organization_spend_limit_exceeded" || code === "project_spend_limit_exceeded";
+
+      // The Creator PRO assistant is already proven active. If this Music deployment
+      // still points at a key/project with a billing mismatch, use the same working
+      // Creator server-side OpenAI flow instead of leaving the user stuck.
+      if (isBillingProblem) {
+        const fallback = await callCreatorAssistant(auth!, message, safeHistory.slice(0, -1));
+        if (fallback.response.ok) {
+          const answer = String(fallback.data?.text || fallback.data?.output_text || fallback.data?.response || "").trim();
+          if (answer) return NextResponse.json({ answer, source: "creator-assistant" });
+        }
+      }
+
+      console.error("SALVIAN assistant OpenAI error", error);
+      return NextResponse.json(
+        { error: classifyOpenAIError(status || 500, { error: { code: error?.code, type: error?.type } }), providerCode: error?.code || error?.type || undefined },
+        { status: status >= 400 && status < 600 ? status : 500 }
+      );
+    }
+  } catch (error) {
+    console.error("SALVIAN AI MUSIC assistant error", error);
+    return NextResponse.json({ error: "Terjadi kesalahan saat menghubungkan ke Asisten AI." }, { status: 500 });
   }
 }
