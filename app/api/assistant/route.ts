@@ -28,8 +28,8 @@ function classifyOpenAIError(status: number, data: any) {
   if (code === "organization_usage_limit_exceeded") return "Batas penggunaan API OpenAI organisasi tercapai. Naikkan approved usage limit jika diperlukan.";
   if (code === "organization_spend_limit_exceeded") return "Batas pengeluaran organisasi OpenAI tercapai.";
   if (code === "project_spend_limit_exceeded") return "Batas pengeluaran project OpenAI tercapai.";
-  if (status === 429 && (code === "rate_limit_exceeded" || type === "rate_limit_error")) return "Batas request/token OpenAI sedang tercapai. Sistem akan mencoba model cadangan.";
-  if (status === 401) return "Konfigurasi OpenAI di server tidak valid.";
+  if (status === 429) return `OpenAI sedang membatasi request (HTTP 429, ${code || type || "unknown"}). Sistem sudah mencoba model cadangan.`;
+  if (status === 401) return "Konfigurasi OpenAI di server tidak valid. Pastikan OPENAI_API_KEY di Vercel adalah key aktif.";
   return `Layanan Asisten AI sedang bermasalah (HTTP ${status}, ${code || type || "unknown"}).`;
 }
 
@@ -64,14 +64,17 @@ export async function POST(request: Request) {
       return (value.role === "user" || value.role === "assistant") && typeof value.content === "string";
     }).slice(-10).map((item: { role: "user" | "assistant"; content: string }) => ({ role: item.role, content: item.content.slice(0, 2000) }));
     const input = [...safeHistory, { role: "user", content: message }];
-    const primaryModel = process.env.OPENAI_ASSISTANT_MODEL || "gpt-5-mini";
+
+    const configuredModel = process.env.OPENAI_ASSISTANT_MODEL?.trim();
+    const primaryModel = configuredModel || "gpt-4.1-mini";
     let result = await callOpenAI(apiKey, primaryModel, input);
 
     const primaryCode = String(result.data?.error?.code || result.data?.error?.type || "").toLowerCase();
-    const isRetryableRateLimit = result.response.status === 429 && (primaryCode === "rate_limit_exceeded" || primaryCode === "rate_limit_error");
-    if (!result.response.ok && isRetryableRateLimit) {
-      await new Promise(resolve => setTimeout(resolve, 1200));
-      result = await callOpenAI(apiKey, "gpt-4.1-mini", input);
+    const isRateLimited = result.response.status === 429 && primaryCode !== "insufficient_quota" && primaryCode !== "credit_balance_exhausted";
+    if (!result.response.ok && isRateLimited) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const fallbackModel = primaryModel === "gpt-4.1-mini" ? "gpt-5-mini" : "gpt-4.1-mini";
+      result = await callOpenAI(apiKey, fallbackModel, input);
     }
 
     if (!result.response.ok) {
