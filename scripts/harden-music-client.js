@@ -15,6 +15,18 @@ const clientPatches = [
     '  const [credits, setCredits] = useState<number | null>(null);\n  const [creditCost, setCreditCost] = useState(100);',
   ],
   [
+    '  const syncGeneration = useRef(0);',
+    '  const syncGeneration = useRef(0);\n  const authIdentity = useRef("");',
+  ],
+  [
+    '          setToken(null); setCredits(null); setUserName("");',
+    '          authIdentity.current = ""; setToken(null); setCredits(null); setUserName("");',
+  ],
+  [
+    '      setUserName((user as { name?: string }).name || user.email || "Creator");',
+    '      authIdentity.current = String((user as { id?: string }).id || user.email || "");\n      setUserName((user as { name?: string }).name || user.email || "Creator");',
+  ],
+  [
     '        setCredits(Number(data.credits));\n        setPlan(String(data.plan || "FREE"));',
     '        setCredits(Number(data.credits));\n        setCreditCost(Math.max(1, Number(data.creditCost || 100)));\n        setPlan(String(data.plan || "FREE"));',
   ],
@@ -26,12 +38,20 @@ const clientPatches = [
     'try { jwt = await auth.getJWTToken?.(); } catch {}',
     'try { jwt = await auth.getJWTToken?.(false); } catch {}',
   ],
+  [
+    '    const onVisibility = () => { if (document.visibilityState === "visible") void syncSession(); };',
+    '    const onVisibility = () => { if (document.visibilityState === "visible") void syncSession(); };\n    const authWatch = window.setInterval(async () => { try { const session = await neon.auth.getSession(); const id = String((session?.data?.user as { id?: string } | undefined)?.id || session?.data?.user?.email || ""); if (id !== authIdentity.current) void syncSession(); } catch {} }, 3000);',
+  ],
+  [
+    '      document.removeEventListener("visibilitychange", onVisibility);\n    };',
+    '      document.removeEventListener("visibilitychange", onVisibility);\n      window.clearInterval(authWatch);\n    };',
+  ],
 ];
 
 for (const [from, to] of clientPatches) {
   if (!client.includes(from)) {
     if (from.includes("getJWTToken?.()") && client.includes("getJWTToken?.(false)")) continue;
-    throw new Error("Required Music client patch pattern not found. Refusing to build with stale UI.");
+    throw new Error("Required Music client patch pattern not found. Refusing to build with stale account/UI logic.");
   }
   client = client.replace(from, to);
 }
@@ -54,4 +74,4 @@ for (const [from, to] of monitorPatches) {
 
 fs.writeFileSync(clientPath, client);
 fs.writeFileSync(monitorPath, monitor);
-console.log("SALVIAN Music UI hardening applied: parent JWT mode, dynamic credit cost, 5-minute generation control");
+console.log("SALVIAN Music UI hardening applied: automatic parent-account sync, dynamic credit cost, 5-minute generation control");
