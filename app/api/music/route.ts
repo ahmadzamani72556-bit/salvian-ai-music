@@ -163,11 +163,13 @@ export async function POST(request: NextRequest) {
       const q = await provider(`/v1/song/query/${encodeURIComponent(taskId)}`, { method: "GET" });
       if (!q.response.ok) return NextResponse.json({ success: false, taskId, error: q.data?.error?.message || q.data?.message || q.data?.error || `Mureka Query ${q.response.status}`, data: q.data }, { status: q.response.status });
       const status = findStatus(q.data);
-      const done = terminal(status);
       const bad = failure(status);
-      const audio = done && !bad ? findAudio(q.data) : null;
-      try { const patch = await patchProject(auth, taskId, status, audio, q.data); if (!patch) console.error("MUSIC LIBRARY STATUS ERROR: project not found"); } catch (e) { console.error("MUSIC LIBRARY STATUS ERROR", e); }
-      const result = NextResponse.json({ success: true, taskId, status, audio, url: audio, finished: done, failed: bad, createdAt: Number(q.data?.created_at || q.data?.data?.created_at || 0), finishedAt: Number(q.data?.finished_at || q.data?.data?.finished_at || 0), failedReason: q.data?.failed_reason || q.data?.data?.failed_reason || null, data: q.data });
+      // Some Mureka responses expose the playable URL before the terminal status
+      // is normalized. Keep that URL instead of waiting for a status string.
+      const audio = !bad ? findAudio(q.data) : null;
+      const done = terminal(status) || Boolean(audio);
+      try { const patch = await patchProject(auth, taskId, done && audio ? "succeeded" : status, audio, q.data); if (!patch) console.error("MUSIC LIBRARY STATUS ERROR: project not found"); } catch (e) { console.error("MUSIC LIBRARY STATUS ERROR", e); }
+      const result = NextResponse.json({ success: true, taskId, status: done && audio ? "succeeded" : status, audio, url: audio, finished: done, failed: bad, createdAt: Number(q.data?.created_at || q.data?.data?.created_at || 0), finishedAt: Number(q.data?.finished_at || q.data?.data?.finished_at || 0), failedReason: q.data?.failed_reason || q.data?.data?.failed_reason || null, data: q.data });
       if (done) result.cookies.set("salvian_generation_task", "", { path: "/", maxAge: 0 });
       return result;
     }
