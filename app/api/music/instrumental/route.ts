@@ -64,10 +64,10 @@ function audio(data: unknown): string | null {
     return null;
   }
   const o = data as Record<string, unknown>;
-  for (const k of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "stream_url", "streamUrl"]) {
+  for (const k of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "stream_url", "streamUrl", "url"]) {
     if (typeof o[k] === "string" && /^(https?:\/\/|data:|blob:)/i.test(o[k] as string)) return o[k] as string;
   }
-  for (const k of ["choices", "songs", "outputs", "results", "data"]) {
+  for (const k of ["audio", "choices", "songs", "outputs", "results", "data"]) {
     const a = audio(o[k]);
     if (a) return a;
   }
@@ -82,24 +82,26 @@ function failure(s: string) {
   return ["failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"].some(v => s === v || s.includes(v));
 }
 
+async function ownsTask(auth: string, id: string) {
+  const uid = subject(auth);
+  if (!uid) return false;
+  const response = await fetch(`${DATA_API}/salvian_music_projects?user_id=eq.${encodeURIComponent(uid)}&task_id=eq.${encodeURIComponent(id)}&select=id&limit=1`, {
+    method: "GET",
+    headers: { Authorization: auth, Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!response.ok) return false;
+  const rows = await response.json().catch(() => []);
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 async function saveLibrary(auth: string, body: Record<string, unknown>) {
   const uid = subject(auth);
   if (uid) {
     const insert = await fetch(`${DATA_API}/salvian_music_projects`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: auth, Accept: "application/json", Prefer: "return=representation" },
-      body: JSON.stringify({
-        user_id: uid,
-        title: body.title,
-        lyrics: body.lyrics,
-        style: body.style || "",
-        model: body.model || "auto",
-        task_id: body.taskId,
-        status: body.status || "preparing",
-        audio_url: body.audioUrl || null,
-        provider_data: body.providerData || null,
-        updated_at: new Date().toISOString(),
-      }),
+      body: JSON.stringify({ user_id: uid, title: body.title, lyrics: body.lyrics, style: body.style || "", model: body.model || "auto", task_id: body.taskId, status: body.status || "preparing", audio_url: body.audioUrl || null, provider_data: body.providerData || null, updated_at: new Date().toISOString() }),
       cache: "no-store",
     });
     const data = await insert.json().catch(() => null);
@@ -108,14 +110,8 @@ async function saveLibrary(auth: string, body: Record<string, unknown>) {
   }
 
   const fallback = await rpc(auth, "salvian_create_music_project", {
-    p_title: body.title,
-    p_lyrics: body.lyrics,
-    p_style: body.style || "",
-    p_model: body.model || "auto",
-    p_task_id: body.taskId,
-    p_status: body.status || "preparing",
-    p_audio_url: body.audioUrl || null,
-    p_provider_data: body.providerData || null,
+    p_title: body.title, p_lyrics: body.lyrics, p_style: body.style || "", p_model: body.model || "auto", p_task_id: body.taskId,
+    p_status: body.status || "preparing", p_audio_url: body.audioUrl || null, p_provider_data: body.providerData || null,
   });
   if (!fallback.response.ok) console.error("INSTRUMENTAL LIBRARY RPC INSERT", fallback.response.status, fallback.data);
   return { ok: fallback.response.ok, data: fallback.data };
@@ -142,19 +138,21 @@ export async function POST(request: NextRequest) {
     if (body?.action === "status") {
       const id = String(body?.taskId || "");
       if (!id) return NextResponse.json({ success: false, error: "Task ID belum dikirim." }, { status: 400 });
+      if (!(await ownsTask(auth, id))) return NextResponse.json({ success: false, error: "Task tidak ditemukan pada Library akun ini." }, { status: 403 });
       const q = await provider(`/v1/instrumental/query/${encodeURIComponent(id)}`);
       if (!q.response.ok) return NextResponse.json({ success: false, error: q.data?.error?.message || q.data?.message || `Mureka Query ${q.response.status}`, data: q.data }, { status: q.response.status });
       const s = status(q.data);
-      const done = terminal(s);
       const bad = failure(s);
-      const a = done && !bad ? audio(q.data) : null;
+      const a = !bad ? audio(q.data) : null;
+      const done = terminal(s) || Boolean(a);
+      const normalizedStatus = done && a ? "succeeded" : s;
       try {
-        const patched = await patchLibrary(auth, id, s, a, q.data);
+        const patched = await patchLibrary(auth, id, normalizedStatus, a, q.data);
         if (!patched) console.error("INSTRUMENTAL LIBRARY STATUS ERROR: project not found");
       } catch (e) {
         console.error("INSTRUMENTAL LIBRARY STATUS ERROR", e);
       }
-      const result = NextResponse.json({ success: true, taskId: id, status: s, audio: a, url: a, finished: done, failed: bad, createdAt: Number(q.data?.created_at || 0), finishedAt: Number(q.data?.finished_at || 0), failedReason: q.data?.failed_reason || null, data: q.data });
+      const result = NextResponse.json({ success: true, taskId: id, status: normalizedStatus, audio: a, url: a, finished: done, failed: bad, createdAt: Number(q.data?.created_at || 0), finishedAt: Number(q.data?.finished_at || 0), failedReason: q.data?.failed_reason || null, data: q.data });
       if (done) {
         result.cookies.set("salvian_generation_task", "", { path: "/", maxAge: 0 });
         result.cookies.set("salvian_generation_endpoint", "", { path: "/", maxAge: 0 });
@@ -198,16 +196,7 @@ export async function POST(request: NextRequest) {
       terminalStatus = s;
       terminalAudio = a;
       terminalProviderData = generated.data;
-      const saved = await saveLibrary(auth, {
-        title: String(body?.title || "Instrumental SALVIAN AI").slice(0, 160),
-        lyrics: "[Instrumental]",
-        style: prompt,
-        model,
-        taskId: id,
-        status: s,
-        audioUrl: a,
-        providerData: generated.data,
-      });
+      const saved = await saveLibrary(auth, { title: String(body?.title || "Instrumental SALVIAN AI").slice(0, 160), lyrics: "[Instrumental]", style: prompt, model, taskId: id, status: s, audioUrl: a, providerData: generated.data });
 
       const result = NextResponse.json({ success: true, title: String(body?.title || "Instrumental SALVIAN AI"), taskId: id, status: s, audio: a, credits: Number(creditRow?.balance || 0), creditCost: MUSIC_CREDIT_COST, librarySaved: saved.ok, data: generated.data });
       if (!terminal(s)) {
