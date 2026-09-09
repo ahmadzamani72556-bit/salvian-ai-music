@@ -27,7 +27,7 @@ function findAudio(value: unknown, depth = 0): string | null {
   }
   if (typeof value !== "object") return null;
   const obj = value as Record<string, unknown>;
-  for (const key of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "url"]) {
+  for (const key of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "stream_url", "streamUrl"]) {
     const found = cleanUrl(obj[key]);
     if (found) return found;
   }
@@ -53,6 +53,14 @@ function findStatus(value: unknown): string {
   const obj = value as Record<string, unknown>;
   for (const key of ["status", "state", "task_status", "taskStatus"]) if (obj[key] != null) return String(obj[key]).toLowerCase();
   return "preparing";
+}
+
+function findString(value: unknown, keys: string[]): string | null {
+  if (!value || typeof value !== "object") return null;
+  const obj = value as Record<string, unknown>;
+  for (const key of keys) if (obj[key] != null && String(obj[key]).trim()) return String(obj[key]).trim();
+  for (const key of ["data", "result", "task"]) if (obj[key]) { const found = findString(obj[key], keys); if (found) return found; }
+  return null;
 }
 
 function terminal(status: string) {
@@ -161,15 +169,27 @@ export async function POST(request: NextRequest) {
       const owned = await ownsTask(auth, taskId);
       if (!owned) return NextResponse.json({ success: false, error: "Task tidak ditemukan pada Library akun ini." }, { status: 403 });
       const q = await provider(`/v1/song/query/${encodeURIComponent(taskId)}`, { method: "GET" });
-      if (!q.response.ok) return NextResponse.json({ success: false, taskId, error: q.data?.error?.message || q.data?.message || q.data?.error || `Mureka Query ${q.response.status}`, data: q.data }, { status: q.response.status });
+      if (!q.response.ok) {
+        const providerError = q.data?.error?.message || q.data?.message || q.data?.error || `Mureka Query ${q.response.status}`;
+        // A missing task after it was accepted means the provider no longer exposes
+        // the paid job. Mark it failed so the server-side refund path can run once.
+        if (q.response.status === 404) {
+          try { await patchProject(auth, taskId, "failed", null, { provider_error: providerError, http_status: 404 }); } catch (e) { console.error("MUSIC ORPHAN TASK RECOVERY ERROR", e); }
+        }
+        return NextResponse.json({ success: false, taskId, error: providerError, providerStatus: q.response.status, data: q.data }, { status: q.response.status });
+      }
       const status = findStatus(q.data);
       const bad = failure(status);
+      // Mureka documents these fields on the asynchronous task response.
+      const providerModel = findString(q.data, ["model"]);
+      const traceId = findString(q.data, ["trace_id", "traceId"]);
+      const failedReason = findString(q.data, ["failed_reason", "failedReason"]);
       // Some Mureka responses expose the playable URL before the terminal status
       // is normalized. Keep that URL instead of waiting for a status string.
       const audio = !bad ? findAudio(q.data) : null;
       const done = terminal(status) || Boolean(audio);
       try { const patch = await patchProject(auth, taskId, done && audio ? "succeeded" : status, audio, q.data); if (!patch) console.error("MUSIC LIBRARY STATUS ERROR: project not found"); } catch (e) { console.error("MUSIC LIBRARY STATUS ERROR", e); }
-      const result = NextResponse.json({ success: true, taskId, status: done && audio ? "succeeded" : status, audio, url: audio, finished: done, failed: bad, createdAt: Number(q.data?.created_at || q.data?.data?.created_at || 0), finishedAt: Number(q.data?.finished_at || q.data?.data?.finished_at || 0), failedReason: q.data?.failed_reason || q.data?.data?.failed_reason || null, data: q.data });
+      const result = NextResponse.json({ success: true, taskId, status: done && audio ? "succeeded" : status, providerStatus: status, providerModel, traceId, audio, url: audio, finished: done, failed: bad, createdAt: Number(q.data?.created_at || q.data?.data?.created_at || 0), finishedAt: Number(q.data?.finished_at || q.data?.data?.finished_at || 0), failedReason, data: q.data });
       if (done) result.cookies.set("salvian_generation_task", "", { path: "/", maxAge: 0 });
       return result;
     }
