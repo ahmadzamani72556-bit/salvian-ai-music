@@ -23,13 +23,27 @@ async function verifyAuth(auth: string | null) {
 function classifyOpenAIError(status: number, data: any) {
   const code = String(data?.error?.code || "").toLowerCase();
   const type = String(data?.error?.type || "").toLowerCase();
+  if (code === "insufficient_quota" || type === "insufficient_quota") return "Kuota API OpenAI tidak mencukupi untuk project ini. Periksa Billing, Limits, dan project yang dipakai oleh API key.";
   if (code === "credit_balance_exhausted") return "Kredit API OpenAI habis. Isi kembali saldo API OpenAI terlebih dahulu.";
   if (code === "organization_usage_limit_exceeded") return "Batas penggunaan API OpenAI organisasi tercapai. Naikkan approved usage limit jika diperlukan.";
   if (code === "organization_spend_limit_exceeded") return "Batas pengeluaran organisasi OpenAI tercapai.";
   if (code === "project_spend_limit_exceeded") return "Batas pengeluaran project OpenAI tercapai.";
-  if (status === 429 && (code === "rate_limit_exceeded" || type === "rate_limit_error")) return "Batas request/token OpenAI sedang tercapai. Tunggu sebentar lalu coba lagi.";
+  if (status === 429 && (code === "rate_limit_exceeded" || type === "rate_limit_error")) return "Batas request/token OpenAI sedang tercapai. Sistem akan mencoba model cadangan.";
   if (status === 401) return "Konfigurasi OpenAI di server tidak valid.";
-  return "Layanan Asisten AI sedang bermasalah. Silakan coba lagi.";
+  return `Layanan Asisten AI sedang bermasalah (HTTP ${status}, ${code || type || "unknown"}).`;
+}
+
+async function callOpenAI(apiKey: string, model: string, input: unknown[]) {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model, instructions: SYSTEM_PROMPT, input, max_output_tokens: 600 }),
+    cache: "no-store",
+  });
+  const raw = await response.text();
+  let data: any = {};
+  try { data = JSON.parse(raw); } catch {}
+  return { response, raw, data };
 }
 
 export async function POST(request: Request) {
@@ -49,22 +63,24 @@ export async function POST(request: Request) {
       const value = item as { role?: unknown; content?: unknown };
       return (value.role === "user" || value.role === "assistant") && typeof value.content === "string";
     }).slice(-10).map((item: { role: "user" | "assistant"; content: string }) => ({ role: item.role, content: item.content.slice(0, 2000) }));
+    const input = [...safeHistory, { role: "user", content: message }];
+    const primaryModel = process.env.OPENAI_ASSISTANT_MODEL || "gpt-5-mini";
+    let result = await callOpenAI(apiKey, primaryModel, input);
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: process.env.OPENAI_ASSISTANT_MODEL || "gpt-5-mini", instructions: SYSTEM_PROMPT, input: [...safeHistory, { role: "user", content: message }] }),
-      cache: "no-store",
-    });
-    const raw = await response.text();
-    let data: any = {};
-    try { data = JSON.parse(raw); } catch {}
-    if (!response.ok) {
-      const providerCode = String(data?.error?.code || data?.error?.type || "unknown");
-      console.error("SALVIAN assistant OpenAI error", response.status, providerCode, raw.slice(0, 1000));
-      return NextResponse.json({ error: classifyOpenAIError(response.status, data), providerCode: providerCode === "unknown" ? undefined : providerCode }, { status: response.status === 429 ? 429 : 502 });
+    const primaryCode = String(result.data?.error?.code || result.data?.error?.type || "").toLowerCase();
+    const isRetryableRateLimit = result.response.status === 429 && (primaryCode === "rate_limit_exceeded" || primaryCode === "rate_limit_error");
+    if (!result.response.ok && isRetryableRateLimit) {
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      result = await callOpenAI(apiKey, "gpt-4.1-mini", input);
     }
-    const answer = typeof data.output_text === "string" ? data.output_text.trim() : Array.isArray(data.output) ? data.output.flatMap((item: any) => Array.isArray(item?.content) ? item.content.map((part: any) => part?.text).filter(Boolean) : []).join("\n").trim() : "";
+
+    if (!result.response.ok) {
+      const providerCode = String(result.data?.error?.code || result.data?.error?.type || "unknown");
+      console.error("SALVIAN assistant OpenAI error", result.response.status, providerCode, result.raw.slice(0, 1000));
+      return NextResponse.json({ error: classifyOpenAIError(result.response.status, result.data), providerCode: providerCode === "unknown" ? undefined : providerCode }, { status: result.response.status === 429 ? 429 : 502 });
+    }
+
+    const answer = typeof result.data.output_text === "string" ? result.data.output_text.trim() : Array.isArray(result.data.output) ? result.data.output.flatMap((item: any) => Array.isArray(item?.content) ? item.content.map((part: any) => part?.text).filter(Boolean) : []).join("\n").trim() : "";
     if (!answer) return NextResponse.json({ error: "Asisten AI tidak menghasilkan jawaban." }, { status: 502 });
     return NextResponse.json({ answer });
   } catch (error) {
