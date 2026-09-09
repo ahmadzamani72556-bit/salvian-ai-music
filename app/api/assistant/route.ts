@@ -11,7 +11,7 @@ Fokus bantuan: akun induk SALVIAN AI CREATOR, kredit, pembayaran/upgrade, Librar
 Jangan pernah meminta password, API key, token, atau data rahasia. Jangan mengklaim dapat mengubah saldo, pembayaran, akun, atau data pengguna secara langsung. Jika masalah membutuhkan tindakan akun induk, arahkan ke Akun SALVIAN AI CREATOR. Jangan meniru gaya atau lirik artis tertentu.`;
 
 async function verifyAuth(auth: string | null) {
-  if (!auth || !/^Bearer\\s+/i.test(auth)) return false;
+  if (!auth || !/^Bearer\s+/i.test(auth)) return false;
   try {
     const response = await fetch(`${DATA_API}/rpc/salvian_get_my_credits`, {
       method: "POST", headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" }, body: "{}", cache: "no-store",
