@@ -11,7 +11,7 @@ Fokus bantuan: akun induk SALVIAN AI CREATOR, kredit, pembayaran/upgrade, Librar
 Jangan pernah meminta password, API key, token, atau data rahasia. Jangan mengklaim dapat mengubah saldo, pembayaran, akun, atau data pengguna secara langsung. Jika masalah membutuhkan tindakan akun induk, arahkan ke Akun SALVIAN AI CREATOR. Jangan meniru gaya atau lirik artis tertentu.`;
 
 async function verifyAuth(auth: string | null) {
-  if (!auth || !/^Bearer\s+/i.test(auth)) return false;
+  if (!auth || !/^Bearer\\s+/i.test(auth)) return false;
   try {
     const response = await fetch(`${DATA_API}/rpc/salvian_get_my_credits`, {
       method: "POST", headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" }, body: "{}", cache: "no-store",
@@ -23,12 +23,13 @@ async function verifyAuth(auth: string | null) {
 function classifyOpenAIError(status: number, data: any) {
   const code = String(data?.error?.code || "").toLowerCase();
   const type = String(data?.error?.type || "").toLowerCase();
+  if (code === "billing_not_active" || type === "billing_not_active") return "Billing API OpenAI belum aktif untuk project yang digunakan. Aktifkan billing/API credits pada project OpenAI lalu gunakan API key dari project tersebut di Vercel.";
   if (code === "insufficient_quota" || type === "insufficient_quota") return "Kuota API OpenAI tidak mencukupi untuk project ini. Periksa Billing, Limits, dan project yang dipakai oleh API key.";
-  if (code === "credit_balance_exhausted") return "Kredit API OpenAI habis. Isi kembali saldo API OpenAI terlebih dahulu.";
-  if (code === "organization_usage_limit_exceeded") return "Batas penggunaan API OpenAI organisasi tercapai. Naikkan approved usage limit jika diperlukan.";
-  if (code === "organization_spend_limit_exceeded") return "Batas pengeluaran organisasi OpenAI tercapai.";
-  if (code === "project_spend_limit_exceeded") return "Batas pengeluaran project OpenAI tercapai.";
-  if (status === 429) return `OpenAI sedang membatasi request (HTTP 429, ${code || type || "unknown"}). Sistem sudah mencoba model cadangan.`;
+  if (code === "credit_balance_exhausted" || type === "credit_balance_exhausted") return "Kredit API OpenAI habis. Isi kembali saldo API OpenAI terlebih dahulu.";
+  if (code === "organization_usage_limit_exceeded" || type === "organization_usage_limit_exceeded") return "Batas penggunaan API OpenAI organisasi tercapai. Naikkan approved usage limit jika diperlukan.";
+  if (code === "organization_spend_limit_exceeded" || type === "organization_spend_limit_exceeded") return "Batas pengeluaran organisasi OpenAI tercapai.";
+  if (code === "project_spend_limit_exceeded" || type === "project_spend_limit_exceeded") return "Batas pengeluaran project OpenAI tercapai.";
+  if (status === 429) return `OpenAI sedang membatasi request (HTTP 429, ${code || type || "unknown"}).`;
   if (status === 401) return "Konfigurasi OpenAI di server tidak valid. Pastikan OPENAI_API_KEY di Vercel adalah key aktif.";
   return `Layanan Asisten AI sedang bermasalah (HTTP ${status}, ${code || type || "unknown"}).`;
 }
@@ -65,12 +66,13 @@ export async function POST(request: Request) {
     }).slice(-10).map((item: { role: "user" | "assistant"; content: string }) => ({ role: item.role, content: item.content.slice(0, 2000) }));
     const input = [...safeHistory, { role: "user", content: message }];
 
-    const configuredModel = process.env.OPENAI_ASSISTANT_MODEL?.trim();
+    const configuredModel = (process.env.OPENAI_ASSISTANT_MODEL || process.env.OPENAI_LYRICS_MODEL || "").trim();
     const primaryModel = configuredModel || "gpt-4.1-mini";
     let result = await callOpenAI(apiKey, primaryModel, input);
 
     const primaryCode = String(result.data?.error?.code || result.data?.error?.type || "").toLowerCase();
-    const isRateLimited = result.response.status === 429 && primaryCode !== "insufficient_quota" && primaryCode !== "credit_balance_exhausted";
+    const isBillingOrQuotaFailure = ["billing_not_active", "insufficient_quota", "credit_balance_exhausted", "organization_usage_limit_exceeded", "organization_spend_limit_exceeded", "project_spend_limit_exceeded"].includes(primaryCode);
+    const isRateLimited = result.response.status === 429 && !isBillingOrQuotaFailure;
     if (!result.response.ok && isRateLimited) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       const fallbackModel = primaryModel === "gpt-4.1-mini" ? "gpt-5-mini" : "gpt-4.1-mini";
