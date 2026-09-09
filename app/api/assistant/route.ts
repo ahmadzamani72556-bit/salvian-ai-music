@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import OpenAI from "openai";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -14,82 +15,81 @@ async function verifyAuth(auth: string | null) {
   if (!auth || !/^Bearer\s+/i.test(auth)) return false;
   try {
     const response = await fetch(`${DATA_API}/rpc/salvian_get_my_credits`, {
-      method: "POST", headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" }, body: "{}", cache: "no-store",
+      method: "POST",
+      headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" },
+      body: "{}",
+      cache: "no-store",
     });
     return response.ok;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 function classifyOpenAIError(status: number, data: any) {
   const code = String(data?.error?.code || "").toLowerCase();
   const type = String(data?.error?.type || "").toLowerCase();
-  if (code === "billing_not_active" || type === "billing_not_active") return "Billing API OpenAI belum aktif untuk project yang digunakan. Aktifkan billing/API credits pada project OpenAI lalu gunakan API key dari project tersebut di Vercel.";
-  if (code === "insufficient_quota" || type === "insufficient_quota") return "Kuota API OpenAI tidak mencukupi untuk project ini. Periksa Billing, Limits, dan project yang dipakai oleh API key.";
+  if (code === "billing_not_active" || type === "billing_not_active") return "Billing API OpenAI belum aktif untuk project yang digunakan. Pastikan API key berasal dari project OpenAI yang sudah memiliki kredit API.";
+  if (code === "insufficient_quota" || type === "insufficient_quota") return "Kuota API OpenAI tidak mencukupi untuk project ini. Periksa Billing dan project yang dipakai oleh API key.";
   if (code === "credit_balance_exhausted" || type === "credit_balance_exhausted") return "Kredit API OpenAI habis. Isi kembali saldo API OpenAI terlebih dahulu.";
-  if (code === "organization_usage_limit_exceeded" || type === "organization_usage_limit_exceeded") return "Batas penggunaan API OpenAI organisasi tercapai. Naikkan approved usage limit jika diperlukan.";
+  if (code === "organization_usage_limit_exceeded" || type === "organization_usage_limit_exceeded") return "Batas penggunaan API OpenAI organisasi tercapai.";
   if (code === "organization_spend_limit_exceeded" || type === "organization_spend_limit_exceeded") return "Batas pengeluaran organisasi OpenAI tercapai.";
   if (code === "project_spend_limit_exceeded" || type === "project_spend_limit_exceeded") return "Batas pengeluaran project OpenAI tercapai.";
-  if (status === 429) return `OpenAI sedang membatasi request (HTTP 429, ${code || type || "unknown"}).`;
-  if (status === 401) return "Konfigurasi OpenAI di server tidak valid. Pastikan OPENAI_API_KEY di Vercel adalah key aktif.";
+  if (status === 401) return "API key OpenAI di server tidak valid atau tidak dapat digunakan.";
+  if (status === 404) return "Model OpenAI yang dipilih tidak tersedia untuk project ini.";
+  if (status === 429) return "Request OpenAI sedang dibatasi. Coba lagi sebentar.";
   return `Layanan Asisten AI sedang bermasalah (HTTP ${status}, ${code || type || "unknown"}).`;
-}
-
-async function callOpenAI(apiKey: string, model: string, input: unknown[]) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, instructions: SYSTEM_PROMPT, input, max_output_tokens: 600 }),
-    cache: "no-store",
-  });
-  const raw = await response.text();
-  let data: any = {};
-  try { data = JSON.parse(raw); } catch {}
-  return { response, raw, data };
 }
 
 export async function POST(request: Request) {
   try {
     const auth = request.headers.get("authorization");
-    if (!(await verifyAuth(auth))) return NextResponse.json({ error: "Silakan masuk melalui Akun SALVIAN AI CREATOR terlebih dahulu." }, { status: 401 });
+    if (!(await verifyAuth(auth))) {
+      return NextResponse.json({ error: "Silakan masuk melalui Akun SALVIAN AI CREATOR terlebih dahulu." }, { status: 401 });
+    }
+
     const body = await request.json().catch(() => ({}));
     const message = typeof body.message === "string" ? body.message.trim() : "";
     const history = Array.isArray(body.history) ? body.history : [];
     if (!message) return NextResponse.json({ error: "Tulis pertanyaan Anda terlebih dahulu." }, { status: 400 });
     if (message.length > 2000) return NextResponse.json({ error: "Pertanyaan terlalu panjang. Ringkas pertanyaan Anda." }, { status: 400 });
+
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return NextResponse.json({ error: "Asisten AI belum aktif di server: OPENAI_API_KEY belum tersedia." }, { status: 503 });
 
-    const safeHistory = history.filter((item: unknown) => {
-      if (!item || typeof item !== "object") return false;
-      const value = item as { role?: unknown; content?: unknown };
-      return (value.role === "user" || value.role === "assistant") && typeof value.content === "string";
-    }).slice(-10).map((item: { role: "user" | "assistant"; content: string }) => ({ role: item.role, content: item.content.slice(0, 2000) }));
-    const input = [...safeHistory, { role: "user", content: message }];
+    const client = new OpenAI({ apiKey });
+    const safeHistory = history
+      .filter((item: unknown) => {
+        if (!item || typeof item !== "object") return false;
+        const value = item as { role?: unknown; content?: unknown };
+        return (value.role === "user" || value.role === "assistant") && typeof value.content === "string";
+      })
+      .slice(-12)
+      .map((item: { role: "user" | "assistant"; content: string }) => ({
+        role: item.role,
+        content: item.content.slice(0, 5000),
+      }));
 
-    const configuredModel = (process.env.OPENAI_ASSISTANT_MODEL || process.env.OPENAI_LYRICS_MODEL || "").trim();
-    const primaryModel = configuredModel || "gpt-4.1-mini";
-    let result = await callOpenAI(apiKey, primaryModel, input);
+    safeHistory.push({ role: "user", content: message });
 
-    const primaryCode = String(result.data?.error?.code || result.data?.error?.type || "").toLowerCase();
-    const isBillingOrQuotaFailure = ["billing_not_active", "insufficient_quota", "credit_balance_exhausted", "organization_usage_limit_exceeded", "organization_spend_limit_exceeded", "project_spend_limit_exceeded"].includes(primaryCode);
-    const isRateLimited = result.response.status === 429 && !isBillingOrQuotaFailure;
-    if (!result.response.ok && isRateLimited) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      const fallbackModel = primaryModel === "gpt-4.1-mini" ? "gpt-5-mini" : "gpt-4.1-mini";
-      result = await callOpenAI(apiKey, fallbackModel, input);
-    }
+    const model = (process.env.OPENAI_ASSISTANT_MODEL || process.env.OPENAI_TEXT_MODEL || process.env.OPENAI_LYRICS_MODEL || "gpt-5.6-luna").trim();
+    const response = await client.responses.create({
+      model,
+      instructions: SYSTEM_PROMPT,
+      input: safeHistory,
+      max_output_tokens: 600,
+    });
 
-    if (!result.response.ok) {
-      const providerCode = String(result.data?.error?.code || result.data?.error?.type || "unknown");
-      console.error("SALVIAN assistant OpenAI error", result.response.status, providerCode, result.raw.slice(0, 1000));
-      return NextResponse.json({ error: classifyOpenAIError(result.response.status, result.data), providerCode: providerCode === "unknown" ? undefined : providerCode }, { status: result.response.status === 429 ? 429 : 502 });
-    }
-
-    const answer = typeof result.data.output_text === "string" ? result.data.output_text.trim() : Array.isArray(result.data.output) ? result.data.output.flatMap((item: any) => Array.isArray(item?.content) ? item.content.map((part: any) => part?.text).filter(Boolean) : []).join("\n").trim() : "";
+    const answer = response.output_text?.trim() || "";
     if (!answer) return NextResponse.json({ error: "Asisten AI tidak menghasilkan jawaban." }, { status: 502 });
     return NextResponse.json({ answer });
-  } catch (error) {
-    console.error("SALVIAN AI MUSIC assistant error", error);
-    return NextResponse.json({ error: "Terjadi kesalahan saat menghubungkan ke Asisten AI." }, { status: 500 });
+  } catch (error: any) {
+    console.error("SALVIAN assistant OpenAI error", error);
+    const status = Number(error?.status || error?.statusCode || 0);
+    const data = { error: { code: error?.code, type: error?.type } };
+    return NextResponse.json(
+      { error: classifyOpenAIError(status || 500, data), providerCode: error?.code || error?.type || undefined },
+      { status: status >= 400 && status < 600 ? status : 500 }
+    );
   }
 }
