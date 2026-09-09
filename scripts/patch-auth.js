@@ -14,6 +14,7 @@ for (const file of targets) {
   let source = fs.readFileSync(file, "utf8");
   source = source.replace(/getJWTToken\?\.\(\)/g, "getJWTToken?.(false)");
   source = source.replace(/getJWTToken\(\)/g, "getJWTToken(false)");
+  source = source.replace(/jwt = await auth\.getJWTToken\?\.\(false\);/g, "jwt = (await auth.getJWTToken?.(false)) ?? null;");
   fs.writeFileSync(file, source);
 }
 
