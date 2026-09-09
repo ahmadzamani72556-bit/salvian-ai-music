@@ -20,6 +20,10 @@ const patches = [
     '  if (uid) {\n    try {\n      const recovered = await createMusicProjectServer(uid, {\n        title: String(body.title || "Instrumental SALVIAN AI"),\n        lyrics: String(body.lyrics || "[Instrumental]"),\n        style: String(body.style || ""),\n        model: String(body.model || "auto"),\n        taskId: body.taskId ? String(body.taskId) : null,\n        status: String(body.status || "preparing"),\n        audioUrl: body.audioUrl ? String(body.audioUrl) : null,\n        providerData: body.providerData ?? null,\n      });\n      if (recovered) return { ok: true, data: recovered, recovered: true };\n    } catch (error) {\n      console.error("INSTRUMENTAL LIBRARY SERVER RECOVERY ERROR", error);\n    }\n  }\n\n  const fallback = await rpc(auth, "salvian_create_music_project", {',
   ],
   [
+    '      const ownership = await fetch(`${DATA_API}/salvian_music_projects?task_id=eq.${encodeURIComponent(id)}&select=id&limit=1`, { headers: { Authorization: auth, Accept: "application/json" }, cache: "no-store" });\n      const ownershipRows = await ownership.json().catch(() => []);\n      if (!ownership.ok) return NextResponse.json({ success: false, error: "Gagal memverifikasi kepemilikan task." }, { status: 503 });\n      if (!Array.isArray(ownershipRows) || ownershipRows.length === 0) return NextResponse.json({ success: false, error: "Task tidak ditemukan pada Library akun ini." }, { status: 404 });',
+    '      const owned = await ownsTask(auth, id);\n      if (!owned) return NextResponse.json({ success: false, error: "Task tidak ditemukan pada Library akun ini." }, { status: 403 });',
+  ],
+  [
     '      const q = await provider(`/v1/instrumental/query/${encodeURIComponent(id)}`);',
     '      const owned = await ownsTask(auth, id);\n      if (!owned) return NextResponse.json({ success: false, error: "Task tidak ditemukan pada Library akun ini." }, { status: 403 });\n      const q = await provider(`/v1/instrumental/query/${encodeURIComponent(id)}`);',
   ],
@@ -37,5 +41,5 @@ for (const [from, to] of patches) {
   route = route.replace(from, to);
 }
 
-fs.writeFileSync(routePath, route);
 console.log("SALVIAN Music instrumental hardening applied: task ownership, server Library recovery, orphan-task refund");
+fs.writeFileSync(routePath, route);
