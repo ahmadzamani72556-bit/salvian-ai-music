@@ -28,6 +28,7 @@ export default function GenerationMonitorV3() {
   const [elapsed, setElapsed] = useState(0);
   const [lastCheck, setLastCheck] = useState(0);
   const [slow, setSlow] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     let stopped = false;
@@ -38,9 +39,9 @@ export default function GenerationMonitorV3() {
     let consecutiveErrors = 0;
     const originalFetch = window.fetch.bind(window);
 
-    const begin = () => { current = { id: "pending", startedAt: Date.now() }; setTaskId("pending"); setStatus("preparing"); setDone(false); setIsFailed(false); setSlow(false); setElapsed(0); };
-    const attach = (id: string, createdAt = 0) => { if (!id || stopped) return; const startedAt = createdAt > 0 ? createdAt : current?.startedAt || Date.now(); current = { id, startedAt }; setCookie("salvian_generation_task", id); setTaskId(id); setStatus("preparing"); setDone(false); setIsFailed(false); setSlow(false); setElapsed(Math.max(0, (Date.now() - startedAt) / 1000)); };
-    const finishAndClear = (bad: boolean, nextStatus: string, messageMs = 8000) => { clearCookie("salvian_generation_task"); clearCookie("salvian_generation_endpoint"); setIsFailed(bad); setDone(!bad); setStatus(nextStatus); if (hide) window.clearTimeout(hide); hide = window.setTimeout(() => { if (!stopped) { current = null; setTaskId(""); } }, messageMs); };
+    const begin = () => { current = { id: "pending", startedAt: Date.now() }; setTaskId("pending"); setStatus("preparing"); setDone(false); setIsFailed(false); setSlow(false); setRetrying(false); setElapsed(0); };
+    const attach = (id: string, createdAt = 0) => { if (!id || stopped) return; const startedAt = createdAt > 0 ? createdAt : current?.startedAt || Date.now(); current = { id, startedAt }; setCookie("salvian_generation_task", id); setTaskId(id); setStatus("preparing"); setDone(false); setIsFailed(false); setSlow(false); setRetrying(false); setElapsed(Math.max(0, (Date.now() - startedAt) / 1000)); };
+    const finishAndClear = (bad: boolean, nextStatus: string, messageMs = 8000) => { clearCookie("salvian_generation_task"); clearCookie("salvian_generation_endpoint"); setIsFailed(bad); setDone(!bad); setStatus(nextStatus); setRetrying(false); if (hide) window.clearTimeout(hide); hide = window.setTimeout(() => { if (!stopped) { current = null; setTaskId(""); } }, messageMs); };
     const token = async () => { try { const session = await neon.auth.getSession(); if (!session?.data?.user) return null; const auth = neon.auth as unknown as { getJWTToken?: (allowAnonymous?: boolean) => Promise<string | null> }; return auth.getJWTToken ? await auth.getJWTToken(false) : null; } catch { return null; } };
     const check = async () => {
       if (stopped) return;
@@ -50,13 +51,14 @@ export default function GenerationMonitorV3() {
       try {
         const res = await originalFetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, body: JSON.stringify({ action: "status", taskId: id }), cache: "no-store" });
         const data = await res.json().catch(() => ({})); if (stopped) return;
-        if (!res.ok) { consecutiveErrors += 1; setLastCheck(Date.now()); setSlow(true); return; }
+        if (!res.ok) { consecutiveErrors += 1; setLastCheck(Date.now()); setSlow(true); setRetrying(true); return; }
         consecutiveErrors = 0;
+        setRetrying(false);
         const next = String(data.status || "preparing"); const bad = Boolean(data.failed) || failed(next); const created = Number(data.createdAt || 0) * 1000; const startedAt = created > 0 ? created : current?.startedAt || Date.now(); current = { id, startedAt };
         const seconds = Math.max(0, (Date.now() - startedAt) / 1000);
         setStatus(next); setIsFailed(bad); setLastCheck(Date.now()); setElapsed(seconds); setSlow(seconds >= NOTICE_AFTER_SECONDS);
         if (data.finished === true || terminal(next)) finishAndClear(bad, next);
-      } catch (e) { consecutiveErrors += 1; setLastCheck(Date.now()); setSlow(true); console.error("SALVIAN MUSIC MONITOR", e); }
+      } catch (e) { consecutiveErrors += 1; setLastCheck(Date.now()); setSlow(true); setRetrying(true); console.error("SALVIAN MUSIC MONITOR", e); }
     };
     const pointer = (event: Event) => { const el = event.target instanceof HTMLElement ? event.target : null; const button = el?.closest("button"); const text = (button?.textContent || "").toLowerCase(); if (text.includes("buat musik") || text.includes("buat lagu") || text.includes("buatkan lagu")) begin(); };
 
@@ -119,5 +121,5 @@ export default function GenerationMonitorV3() {
   }, []);
 
   if (!taskId) return null;
-  return <div className="fixed bottom-20 left-3 right-3 z-[70] mx-auto max-w-xl rounded-2xl border border-violet-400/30 bg-[#111116]/98 p-4 shadow-2xl backdrop-blur-xl"><div className="flex items-start gap-3"><div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-violet-500/15 text-violet-200">{isFailed ? <AlertTriangle size={21}/> : done ? <CheckCircle2 size={21}/> : <LoaderCircle size={21} className="animate-spin"/>}</div><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2 text-sm font-bold"><div className="flex items-center gap-2"><Music2 size={15}/>{isFailed ? "Pembuatan musik bermasalah" : done ? "Musik selesai" : "Pembuatan musik"}</div><div className="flex items-center gap-1 text-xs text-violet-200"><Clock3 size={13}/> {duration(elapsed)}</div></div><p className="mt-1 text-xs leading-5 text-zinc-400">{isFailed ? "Mesin musik melaporkan proses gagal." : done ? "Musik selesai dan project diperbarui di Library." : slow ? "Proses lebih lama dari biasanya. Tetap dipantau sampai mesin memberi hasil." : "Proses dipantau otomatis setiap 5 detik."}</p>{!done && !isFailed && <><div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-violet-400 transition-[width] duration-1000" style={{ width: `${Math.min(100, Math.max(2, elapsed / NOTICE_AFTER_SECONDS * 100))}%` }}/></div><div className="mt-1 flex justify-between text-[9px] text-zinc-600"><span>{slow ? "Masih dipantau" : "Kontrol waktu"}</span><span>{duration(Math.max(NOTICE_AFTER_SECONDS, elapsed))}</span></div></>}<div className="mt-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500"><span>{stage(status)}</span><span>{taskId === "pending" ? "Menunggu Task ID" : `Task ${taskId}`}</span></div>{lastCheck > 0 && !done && !isFailed && <div className="mt-1 text-[9px] text-zinc-600">Pemeriksaan terakhir: {new Date(lastCheck).toLocaleTimeString("id-ID")}</div>}</div></div></div>;
+  return <div className="fixed bottom-20 left-3 right-3 z-[70] mx-auto max-w-xl rounded-2xl border border-violet-400/30 bg-[#111116]/98 p-4 shadow-2xl backdrop-blur-xl"><div className="flex items-start gap-3"><div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-violet-500/15 text-violet-200">{isFailed ? <AlertTriangle size={21}/> : done ? <CheckCircle2 size={21}/> : <LoaderCircle size={21} className="animate-spin"/>}</div><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2 text-sm font-bold"><div className="flex items-center gap-2"><Music2 size={15}/>{isFailed ? "Pembuatan musik bermasalah" : done ? "Musik selesai" : "Pembuatan musik"}</div><div className="flex items-center gap-1 text-xs text-violet-200"><Clock3 size={13}/> {duration(elapsed)}</div></div><p className="mt-1 text-xs leading-5 text-zinc-400">{isFailed ? "Mesin musik melaporkan proses gagal." : done ? "Musik selesai dan project diperbarui di Library." : slow ? "Proses lebih lama dari biasanya. Tetap dipantau sampai mesin memberi hasil." : "Proses dipantau otomatis setiap 5 detik."}</p>{!done && !isFailed && <><div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-violet-400 transition-[width] duration-1000" style={{ width: `${Math.min(100, Math.max(2, elapsed / NOTICE_AFTER_SECONDS * 100))}%` }}/></div><div className="mt-1 flex justify-between text-[9px] text-zinc-600"><span>{slow ? "Masih dipantau" : "Kontrol waktu"}</span><span>{duration(Math.max(NOTICE_AFTER_SECONDS, elapsed))}</span></div></>}<div className="mt-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500"><span>{stage(status)}</span><span>{taskId === "pending" ? "Menunggu Task ID" : `Task ${taskId}`}</span></div>{lastCheck > 0 && !done && !isFailed && <div className="mt-1 text-[9px] text-zinc-600">Pemeriksaan terakhir: {new Date(lastCheck).toLocaleTimeString("id-ID")}{retrying ? " · koneksi sedang dicoba ulang" : ""}</div>}</div></div></div>;
 }
