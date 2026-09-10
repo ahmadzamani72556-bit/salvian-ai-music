@@ -64,7 +64,7 @@ function audio(data: unknown): string | null {
     return null;
   }
   const o = data as Record<string, unknown>;
-  for (const k of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "stream_url", "streamUrl", "url"]) {
+  for (const k of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "url"]) {
     if (typeof o[k] === "string" && /^(https?:\/\/|data:|blob:)/i.test(o[k] as string)) return o[k] as string;
   }
   for (const k of ["audio", "choices", "songs", "outputs", "results", "data"]) {
@@ -74,6 +74,14 @@ function audio(data: unknown): string | null {
   return null;
 }
 
+function streamAudio(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  if (Array.isArray(data)) { for (const x of data) { const a = streamAudio(x); if (a) return a; } return null; }
+  const o = data as Record<string, unknown>;
+  for (const k of ["stream_url", "streamUrl"]) { if (typeof o[k] === "string" && /^(https?:\/\/|data:|blob:)/i.test(o[k] as string)) return o[k] as string; }
+  for (const k of ["audio", "choices", "songs", "outputs", "results", "data"]) { const a = streamAudio(o[k]); if (a) return a; }
+  return null;
+}
 function terminal(s: string) {
   return ["succeeded", "success", "completed", "complete", "done", "failed", "failure", "timeouted", "timeout", "timedout", "timed_out", "cancelled", "canceled", "error"].some(v => s === v || s.includes(v));
 }
@@ -144,7 +152,8 @@ export async function POST(request: NextRequest) {
       const s = status(q.data);
       const bad = failure(s);
       const a = !bad ? audio(q.data) : null;
-      const done = terminal(s) || Boolean(a);
+      const streamUrl = !bad ? streamAudio(q.data) : null;
+      const done = terminal(s);
       const normalizedStatus = done && a ? "succeeded" : s;
       try {
         const patched = await patchLibrary(auth, id, normalizedStatus, a, q.data);
@@ -152,7 +161,7 @@ export async function POST(request: NextRequest) {
       } catch (e) {
         console.error("INSTRUMENTAL LIBRARY STATUS ERROR", e);
       }
-      const result = NextResponse.json({ success: true, taskId: id, status: normalizedStatus, audio: a, url: a, finished: done, failed: bad, createdAt: Number(q.data?.created_at || 0), finishedAt: Number(q.data?.finished_at || 0), failedReason: q.data?.failed_reason || null, data: q.data });
+      const result = NextResponse.json({ success: true, taskId: id, status: normalizedStatus, audio: a, url: a, streamUrl, finished: done, failed: bad, createdAt: Number(q.data?.created_at || 0), finishedAt: Number(q.data?.finished_at || 0), failedReason: q.data?.failed_reason || null, data: q.data });
       if (done) {
         result.cookies.set("salvian_generation_task", "", { path: "/", maxAge: 0 });
         result.cookies.set("salvian_generation_endpoint", "", { path: "/", maxAge: 0 });
