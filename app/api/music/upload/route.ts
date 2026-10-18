@@ -5,23 +5,11 @@ export const maxDuration = 60;
 
 const MUREKA_BASE_URL = process.env.MUREKA_BASE_URL || "https://api.mureka.ai";
 const MUREKA_API_KEY = process.env.MUREKA_API_KEY || process.env.MUSIC_API_KEY;
-const DATA_API = process.env.NEON_DATA_API_URL || "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
 
 type UploadPurpose = "reference" | "melody" | "audio";
 
-async function verifyAuth(auth: string | null) {
-  if (!auth || !/^Bearer\s+/i.test(auth)) return false;
-  try {
-    const response = await fetch(`${DATA_API}/rpc/salvian_get_my_credits`, {
-      method: "POST",
-      headers: { Authorization: auth, Accept: "application/json", "Content-Type": "application/json" },
-      body: "{}",
-      cache: "no-store",
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
+function hasParentSession(auth: string | null) {
+  return Boolean(auth && /^Bearer\s+/i.test(auth));
 }
 
 async function murekaUpload(file: File, purpose: UploadPurpose) {
@@ -56,8 +44,8 @@ async function murekaVocalClone(file: File) {
 
 export async function POST(request: NextRequest) {
   try {
-    if (!(await verifyAuth(request.headers.get("authorization")))) {
-      return NextResponse.json({ success: false, error: "Sesi akun tidak valid. Silakan masuk melalui Akun SALVIAN AI CREATOR." }, { status: 401 });
+    if (!hasParentSession(request.headers.get("authorization"))) {
+      return NextResponse.json({ success: false, error: "Sesi induk SALVIAN AI belum tersedia." }, { status: 401 });
     }
     const form = await request.formData();
     const file = form.get("file");
