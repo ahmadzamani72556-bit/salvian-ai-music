@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listMusicProjectsServer } from "../../../lib/server-credit-refund";
+import { listMusicProjectsServer } from "../../../lib/server-music-projects";
 
 export const runtime = "nodejs";
 
@@ -20,9 +20,9 @@ function authorized(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const auth = authorized(request);
-  if (!auth) return NextResponse.json({ success: false, error: "Sesi login tidak ditemukan." }, { status: 401 });
+  if (!auth) return NextResponse.json({ success: false, error: "Sesi induk SALVIAN AI belum tersedia." }, { status: 401 });
   const userId = subject(auth);
-  if (!userId) return NextResponse.json({ success: false, error: "Sesi akun tidak valid." }, { status: 401 });
+  if (!userId) return NextResponse.json({ success: false, error: "Sesi induk tidak valid." }, { status: 401 });
   try {
     const projects = await listMusicProjectsServer(userId);
     return NextResponse.json({ success: true, projects });
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   const auth = authorized(request);
-  if (!auth) return NextResponse.json({ success: false, error: "Sesi login tidak ditemukan." }, { status: 401 });
+  if (!auth) return NextResponse.json({ success: false, error: "Sesi induk SALVIAN AI belum tersedia." }, { status: 401 });
   const id = request.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ success: false, error: "ID project belum dikirim." }, { status: 400 });
   try {
