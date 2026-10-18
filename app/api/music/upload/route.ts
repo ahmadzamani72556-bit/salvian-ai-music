@@ -8,10 +8,6 @@ const MUREKA_API_KEY = process.env.MUREKA_API_KEY || process.env.MUSIC_API_KEY;
 
 type UploadPurpose = "reference" | "melody" | "audio";
 
-function hasParentSession(auth: string | null) {
-  return Boolean(auth && /^Bearer\s+/i.test(auth));
-}
-
 async function murekaUpload(file: File, purpose: UploadPurpose) {
   if (!MUREKA_API_KEY) throw new Error("MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di Vercel.");
   const form = new FormData();
@@ -44,9 +40,7 @@ async function murekaVocalClone(file: File) {
 
 export async function POST(request: NextRequest) {
   try {
-    if (!hasParentSession(request.headers.get("authorization"))) {
-      return NextResponse.json({ success: false, error: "Sesi induk SALVIAN AI belum tersedia." }, { status: 401 });
-    }
+    // SALVIAN AI MUSIC has no login/account requirement.
     const form = await request.formData();
     const file = form.get("file");
     const requestedPurpose = String(form.get("purpose") || "reference").toLowerCase();
