@@ -2,7 +2,6 @@
 
 import { FormEvent, useState } from "react";
 import { Check, Copy, MessageCircle, Send, Sparkles, X } from "lucide-react";
-import { createClient, BetterAuthVanillaAdapter } from "@neondatabase/neon-js";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -10,9 +9,6 @@ const welcome: Message = {
   role: "assistant",
   content: "Halo! Saya Asisten AI SALVIAN AI MUSIC. Saya bisa membantu ide musik, lirik, genre, vokal, prompt, dan penggunaan Studio.",
 };
-
-const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
-const neon = createClient({ auth: { url: AUTH, adapter: BetterAuthVanillaAdapter() } });
 
 export default function AiAssistant() {
   const [open, setOpen] = useState(false);
@@ -30,10 +26,11 @@ export default function AiAssistant() {
     setMessages(prev => [...prev, { role: "user", content: message }]);
     setBusy(true);
     try {
-      const auth = neon.auth as unknown as { getJWTToken?: (allowAnonymous?: boolean) => Promise<string | null> };
-      const token = await auth.getJWTToken?.(false);
-      if (!token) throw new Error("Workspace sedang menunggu session induk SALVIAN AI.");
-      const res = await fetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ message, history }) });
+      const res = await fetch("/api/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, history }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Asisten AI sedang tidak tersedia.");
       setMessages(prev => [...prev, { role: "assistant", content: String(data.answer || "Maaf, saya belum dapat menjawab.") }]);
