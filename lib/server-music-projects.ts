@@ -53,3 +53,14 @@ export async function updateMusicProjectServer(userId: string, taskId: string, s
   `;
   return rows?.[0] ?? null;
 }
+
+export async function deleteMusicProjectServer(userId: string, id: string) {
+  if (!userId || !id) return false;
+  const sql = getSql();
+  const rows = await sql`
+    DELETE FROM public.salvian_music_projects
+    WHERE user_id = ${userId} AND id = ${id}
+    RETURNING id
+  `;
+  return rows.length > 0;
+}
