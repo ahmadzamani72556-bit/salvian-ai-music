@@ -8,12 +8,11 @@ type Message = { role: "user" | "assistant"; content: string };
 
 const welcome: Message = {
   role: "assistant",
-  content: "Halo! Saya Asisten AI SALVIAN AI MUSIC. Saya bisa membantu soal daftar/login akun, kredit, Library, cara membuat lagu, atau masalah di aplikasi.",
+  content: "Halo! Saya Asisten AI SALVIAN AI MUSIC. Saya bisa membantu ide musik, lirik, genre, vokal, prompt, dan penggunaan Studio.",
 };
 
 const AUTH = "https://ep-ancient-bonus-b37vykrs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth";
-const DATA = "https://ep-ancient-bonus-b37vykrs.apirest.c-4.ap-southeast-1.aws.neon.tech/neondb/rest/v1";
-const neon = createClient({ auth: { url: AUTH, adapter: BetterAuthVanillaAdapter() }, dataApi: { url: DATA } });
+const neon = createClient({ auth: { url: AUTH, adapter: BetterAuthVanillaAdapter() } });
 
 export default function AiAssistant() {
   const [open, setOpen] = useState(false);
@@ -33,12 +32,8 @@ export default function AiAssistant() {
     try {
       const auth = neon.auth as unknown as { getJWTToken?: (allowAnonymous?: boolean) => Promise<string | null> };
       const token = await auth.getJWTToken?.(false);
-      if (!token) throw new Error("Silakan masuk melalui Akun SALVIAN AI CREATOR terlebih dahulu.");
-      const res = await fetch("/api/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ message, history }),
-      });
+      if (!token) throw new Error("Workspace sedang menunggu session induk SALVIAN AI.");
+      const res = await fetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ message, history }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Asisten AI sedang tidak tersedia.");
       setMessages(prev => [...prev, { role: "assistant", content: String(data.answer || "Maaf, saya belum dapat menjawab.") }]);
@@ -53,64 +48,16 @@ export default function AiAssistant() {
       setCopiedIndex(index);
       window.setTimeout(() => setCopiedIndex(current => current === index ? null : current), 1600);
     } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = content;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      document.execCommand("copy");
-      textarea.remove();
-      setCopiedIndex(index);
-      window.setTimeout(() => setCopiedIndex(current => current === index ? null : current), 1600);
+      const textarea = document.createElement("textarea"); textarea.value = content; textarea.style.position = "fixed"; textarea.style.opacity = "0"; document.body.appendChild(textarea); textarea.focus(); textarea.select(); document.execCommand("copy"); textarea.remove(); setCopiedIndex(index); window.setTimeout(() => setCopiedIndex(current => current === index ? null : current), 1600);
     }
   };
 
-  return (
-    <>
-      <button type="button" onClick={() => setOpen(true)} aria-label="Buka Asisten AI SALVIAN AI MUSIC" className="fixed bottom-24 right-4 z-40 flex items-center gap-2 rounded-full border border-violet-400/30 bg-violet-600 px-4 py-3 text-sm font-extrabold text-white shadow-2xl shadow-violet-900/30 transition hover:scale-[1.02] sm:right-6">
-        <MessageCircle size={18} /> Asisten AI
-      </button>
-
-      {open && (
-        <div className="fixed inset-0 z-50 bg-black/70 p-3 backdrop-blur-sm sm:p-6">
-          <div className="mx-auto flex h-full max-h-[760px] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#111116] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/8 px-4 py-4 sm:px-6">
-              <div className="flex items-center gap-3">
-                <div className="grid h-10 w-10 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Sparkles size={20} /></div>
-                <div><div className="font-extrabold">Asisten AI</div><div className="text-xs text-zinc-500">Bantuan SALVIAN AI MUSIC</div></div>
-              </div>
-              <button type="button" onClick={() => setOpen(false)} aria-label="Tutup Asisten AI" className="rounded-xl p-2 text-zinc-400 hover:bg-white/5"><X size={20} /></button>
-            </div>
-
-            <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-6" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
-              {messages.map((item, index) => (
-                <div key={index} className={item.role === "user" ? "flex justify-end" : "flex justify-start"}>
-                  <div className={item.role === "user" ? "max-w-[88%] select-none touch-pan-y rounded-2xl rounded-br-md bg-violet-500/20 px-4 py-3 text-sm leading-6 text-violet-50" : "max-w-[92%] select-none touch-pan-y rounded-2xl rounded-bl-md border border-white/8 bg-black/20 px-4 py-3 text-sm leading-6 text-zinc-200"}>
-                    <div className="select-none whitespace-pre-wrap break-words">{item.content}</div>
-                    {item.role === "assistant" && (
-                      <button type="button" onClick={() => copyReply(item.content, index)} aria-label="Salin jawaban Asisten AI" className="mt-3 inline-flex select-none touch-manipulation items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 transition hover:bg-white/10 hover:text-white">
-                        {copiedIndex === index ? <Check size={14} /> : <Copy size={14} />}
-                        {copiedIndex === index ? "Tersalin" : "Salin"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {busy && <div className="select-none text-sm text-zinc-500">Asisten sedang mengetik…</div>}
-            </div>
-
-            <form onSubmit={ask} className="border-t border-white/8 p-3 sm:p-4">
-              <div className="flex gap-2">
-                <input value={input} onChange={event => setInput(event.target.value)} maxLength={2000} placeholder="Contoh: bagaimana cara daftar akun?" className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-600" />
-                <button type="submit" disabled={busy || !input.trim()} aria-label="Kirim pertanyaan" className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-black disabled:opacity-40"><Send size={18} /></button>
-              </div>
-              <p className="mt-2 select-none px-1 text-[11px] text-zinc-600">Jangan kirim password, API key, token, atau data rahasia.</p>
-            </form>
-          </div>
-        </div>
-      )}
-    </>
-  );
+  return <>
+    <button type="button" onClick={() => setOpen(true)} aria-label="Buka Asisten AI SALVIAN AI MUSIC" className="fixed bottom-24 right-4 z-40 flex items-center gap-2 rounded-full border border-violet-400/30 bg-violet-600 px-4 py-3 text-sm font-extrabold text-white shadow-2xl shadow-violet-900/30 transition hover:scale-[1.02] sm:right-6"><MessageCircle size={18}/> Asisten AI</button>
+    {open && <div className="fixed inset-0 z-50 bg-black/70 p-3 backdrop-blur-sm sm:p-6"><div className="mx-auto flex h-full max-h-[760px] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#111116] shadow-2xl">
+      <div className="flex items-center justify-between border-b border-white/8 px-4 py-4 sm:px-6"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Sparkles size={20}/></div><div><div className="font-extrabold">Asisten AI</div><div className="text-xs text-zinc-500">Bantuan SALVIAN AI MUSIC</div></div></div><button type="button" onClick={() => setOpen(false)} aria-label="Tutup Asisten AI" className="rounded-xl p-2 text-zinc-400 hover:bg-white/5"><X size={20}/></button></div>
+      <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-6">{messages.map((item, index) => <div key={index} className={item.role === "user" ? "flex justify-end" : "flex justify-start"}><div className={item.role === "user" ? "max-w-[88%] rounded-2xl rounded-br-md bg-violet-500/20 px-4 py-3 text-sm leading-6 text-violet-50" : "max-w-[92%] rounded-2xl rounded-bl-md border border-white/8 bg-black/20 px-4 py-3 text-sm leading-6 text-zinc-200"}><div className="whitespace-pre-wrap break-words">{item.content}</div>{item.role === "assistant" && <button type="button" onClick={() => copyReply(item.content, index)} className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300">{copiedIndex === index ? <Check size={14}/> : <Copy size={14}/>} {copiedIndex === index ? "Tersalin" : "Salin"}</button>}</div></div>)}{busy && <div className="text-sm text-zinc-500">Asisten sedang mengetik…</div>}</div>
+      <form onSubmit={ask} className="border-t border-white/8 p-3 sm:p-4"><div className="flex gap-2"><input value={input} onChange={event => setInput(event.target.value)} maxLength={2000} placeholder="Tanya apa saja tentang Studio Musik…" className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-600"/><button type="submit" disabled={busy || !input.trim()} aria-label="Kirim pertanyaan" className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-black disabled:opacity-40"><Send size={18}/></button></div><p className="mt-2 px-1 text-[11px] text-zinc-600">Jangan kirim password, API key, token, atau data rahasia.</p></form>
+    </div></div>}
+  </>;
 }
