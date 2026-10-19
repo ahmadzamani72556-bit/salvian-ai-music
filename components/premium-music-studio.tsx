@@ -25,6 +25,7 @@ function getWorkspaceId() {
   return id;
 }
 function headersFor(workspace: string, json = false) { return json ? { "Content-Type": "application/json", "X-Music-Workspace": workspace } : { "X-Music-Workspace": workspace }; }
+function emitMusicEvent(name: string, detail: unknown) { if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(name, { detail })); }
 
 export default function PremiumMusicStudio() {
   const [workspace, setWorkspace] = useState("");
@@ -58,7 +59,7 @@ export default function PremiumMusicStudio() {
   const fileVocal = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const loadLibrary = async (id = workspace) => { if (!id) return; const res = await fetch("/api/projects", { headers: headersFor(id), cache: "no-store" }); const data = await res.json().catch(() => ({})); if (res.ok) setProjects(Array.isArray(data.projects) ? data.projects : []); };
+  const loadLibrary = async (id = workspace) => { if (!id) return; const res = await fetch("/api/projects", { headers: headersFor(id), cache: "no-store" }); const data = await res.json().catch(() => ({})); if (res.ok) { const next = Array.isArray(data.projects) ? data.projects : []; setProjects(next); emitMusicEvent("salvian-music-results-update", { projects: next }); } };
   useEffect(() => { const id = getWorkspaceId(); setWorkspace(id); void loadLibrary(id); }, []);
   useEffect(() => { const openAssistant = () => setChatOpen(true); window.addEventListener("salvian-open-assistant", openAssistant); return () => window.removeEventListener("salvian-open-assistant", openAssistant); }, []);
   useEffect(() => { if (active === "library") void loadLibrary(); }, [active]);
@@ -70,23 +71,50 @@ export default function PremiumMusicStudio() {
   };
 
   const pollTask = async (taskId: string, endpoint = "/api/music", engine = musicEngine) => {
-    if (!workspace || !taskId) return; setPolling(true);
-    for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 6000)); try { const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ action: "status", taskId, musicEngine: engine }) }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Status generasi gagal dibaca."); if (data.finished) { setNotice(data.audio ? `${data.musicEngine || "Musik"} selesai dan tersimpan di Library.` : data.failed ? "Generasi musik gagal." : "Generasi selesai."); await loadLibrary(); setPolling(false); return; } setNotice(`Musik sedang dibuat… ${data.status || "diproses"}`); } catch (e) { setNotice(e instanceof Error ? e.message : "Status generasi gagal dibaca."); } }
-    setPolling(false); setNotice("Generasi masih berjalan. Library dapat diperiksa kembali nanti.");
+    if (!workspace || !taskId) return;
+    setPolling(true);
+    emitMusicEvent("salvian-music-generation-status", { generating: true, status: "Permintaan diterima. Mesin sedang menyiapkan lagu…" });
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 6000));
+      try {
+        const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ action: "status", taskId, musicEngine: engine }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Status generasi gagal dibaca.");
+        if (data.finished) {
+          const finalStatus = data.audio ? `${data.musicEngine || "Musik"} selesai dan tersimpan di Library.` : data.failed ? "Generasi musik gagal." : "Generasi selesai.";
+          setNotice(finalStatus);
+          emitMusicEvent("salvian-music-generation-status", { generating: false, failed: Boolean(data.failed), status: finalStatus });
+          await loadLibrary();
+          setPolling(false);
+          return;
+        }
+        const progressStatus = `Musik sedang dibuat… ${data.status || "diproses"}`;
+        setNotice(progressStatus);
+        emitMusicEvent("salvian-music-generation-status", { generating: true, status: progressStatus });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Status generasi gagal dibaca.";
+        setNotice(message);
+        emitMusicEvent("salvian-music-generation-status", { generating: true, status: message });
+      }
+    }
+    const pendingStatus = "Proses masih berjalan. Buka Hasil Lagu & Proses untuk memeriksa status dan hasil terbaru.";
+    setPolling(false);
+    setNotice(pendingStatus);
+    emitMusicEvent("salvian-music-generation-status", { generating: true, status: pendingStatus });
   };
 
   const generate = async () => {
     if (!workspace) return; if (!lyrics.trim() && !instrumental) { setNotice("Masukkan lirik atau aktifkan mode instrumental."); return; }
     if ((referenceId && referenceEngine !== musicEngine) || (vocalId && vocalEngine !== musicEngine)) { setNotice(`File referensi/vokal diunggah untuk mesin lain. Pilih ulang Audio Referensi dan Voice & Vocal saat mesin ${engineCards.find(e => e.id === musicEngine)?.title || musicEngine} aktif.`); return; }
-    setBusy(true); setNotice(`Mengirim karya ke ${engineCards.find(e => e.id === musicEngine)?.title || "mesin musik"}…`);
+    setBusy(true); const startStatus = `Mengirim karya ke ${engineCards.find(e => e.id === musicEngine)?.title || "mesin musik"}…`; setNotice(startStatus); emitMusicEvent("salvian-music-generation-status", { generating: true, status: startStatus });
     try {
       const title = (lyrics.split("\n").find(Boolean) || `${musicEngine} Music`).replace(/^\[.*?\]\s*/, "").slice(0, 70);
       const style = `${prompt.slice(0, 900)}${prompt ? ", " : ""}${language}, ${tempo} BPM, ${gender} vocal`;
       const endpoint = "/api/music";
       const body = { title, lyrics: lyrics.trim(), style, model: musicEngine === "mureka" ? modelMap[model] : musicEngine, musicEngine, n: 1, stream: true, gender, language, tempo, instrumental, reference_id: referenceId || undefined, vocal_id: vocalId || undefined };
       const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify(body) }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Gagal membuat musik.");
-      setNotice(data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.`); await loadLibrary(); if (data.taskId && !data.audio) void pollTask(String(data.taskId), endpoint, musicEngine);
-    } catch (e) { setNotice(e instanceof Error ? e.message : "Gagal membuat musik."); } finally { setBusy(false); }
+      setNotice(data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.`); emitMusicEvent("salvian-music-generation-status", { generating: Boolean(data.taskId && !data.audio), status: data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.` }); await loadLibrary(); if (data.audio) emitMusicEvent("salvian-music-generation-status", { generating: false, status: `${data.musicEngine || "Musik"} berhasil dibuat.` }); if (data.taskId && !data.audio) void pollTask(String(data.taskId), endpoint, musicEngine);
+    } catch (e) { const message = e instanceof Error ? e.message : "Gagal membuat musik."; setNotice(message); emitMusicEvent("salvian-music-generation-status", { generating: false, failed: true, status: message }); } finally { setBusy(false); }
   };
 
   const ask = async (event?: FormEvent) => {
