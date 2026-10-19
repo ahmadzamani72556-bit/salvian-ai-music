@@ -2,18 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 
 /**
  * Stage-2 bridge:
- * After a Mureka reference upload, the upload route stores the full-duration
- * Mureka Remix upload ID in a short-lived HttpOnly cookie. The existing Studio
- * still posts generation requests to /api/music, so this bridge sends only
- * the next generation request to the dedicated Remix handler. Status polling
- * continues to use the existing /api/music route after the one-shot cookie is
- * cleared by the Remix handler.
+ * Only route the next Mureka generation request to the dedicated full-duration
+ * Remix handler when BOTH one-shot cookies exist. A stale pending flag without
+ * the actual Remix upload ID must never send the user into a guaranteed
+ * "Audio Referensi Remix belum ditemukan" failure.
  */
 export function middleware(request: NextRequest) {
+  const pending = request.cookies.get("salvian_stage2_pending")?.value === "1";
+  const remixId = request.cookies.get("salvian_stage2_remix_id")?.value?.trim();
+
   if (
     request.method === "POST" &&
     request.nextUrl.pathname === "/api/music" &&
-    request.cookies.get("salvian_stage2_pending")?.value === "1"
+    pending &&
+    Boolean(remixId)
   ) {
     return NextResponse.rewrite(new URL("/api/music/remix", request.url));
   }
