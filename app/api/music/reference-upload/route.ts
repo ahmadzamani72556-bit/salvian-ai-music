@@ -30,9 +30,8 @@ export async function POST(request: Request) {
 
         return {
           allowedContentTypes: ["audio/mpeg", "audio/mp4", "audio/x-m4a"],
+          maximumSizeInBytes: 10 * 1024 * 1024,
           addRandomSuffix: true,
-          // No application-level 10 MB cap. Vercel Blob supports much larger
-          // files and the client SDK can use multipart uploads automatically.
           tokenPayload: JSON.stringify({ workspace }),
         };
       },
