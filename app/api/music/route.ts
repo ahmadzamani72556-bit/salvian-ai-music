@@ -138,6 +138,7 @@ async function mureka(path: string, init: RequestInit = {}) {
   return { response, data: await readJson(response) as any };
 }
 
+// Mesin 1 Mureka: TETAP pada directive yang sudah dikunci.
 function buildUserMusicDirective(body: Record<string, unknown>, provider: "mureka" | "eleven") {
   const rawStyle = String(body.style || "").trim();
   const language = String(body.language || "Indonesia").trim();
@@ -147,9 +148,7 @@ function buildUserMusicDirective(body: Record<string, unknown>, provider: "murek
   const referenceId = String(body.reference_id || "").trim();
   const vocalId = String(body.vocal_id || "").trim();
   const targetDurationMs = Number(body.reference_duration_ms || 0);
-  const targetDuration = Number.isFinite(targetDurationMs) && targetDurationMs >= 10000
-    ? `${Math.round(targetDurationMs / 1000)} seconds`
-    : "";
+  const targetDuration = Number.isFinite(targetDurationMs) && targetDurationMs >= 10000 ? `${Math.round(targetDurationMs / 1000)} seconds` : "";
   const parts = [
     "SALVIAN AI MUSIC — USER MUSIC DIRECTIVE. Treat this directive as the source of truth.",
     rawStyle || "Create the music according to the user's other controls.",
@@ -167,20 +166,52 @@ function buildUserMusicDirective(body: Record<string, unknown>, provider: "murek
   return provider === "mureka" ? joined.slice(0, 1024) : joined;
 }
 
+// Shared quality layer for Mesin 2.5 + Suno. This does NOT modify Mesin 1.
+function buildPremiumMusicDirective(body: Record<string, unknown>) {
+  const rawStyle = String(body.style || "").trim();
+  const language = String(body.language || "Indonesia").trim();
+  const tempo = Number(body.tempo || 0);
+  const gender = String(body.gender || "").trim();
+  const instrumental = body.instrumental === true;
+  const referenceId = String(body.reference_id || "").trim();
+  const vocalId = String(body.vocal_id || "").trim();
+  const targetDurationMs = Number(body.reference_duration_ms || 0);
+  const targetDuration = Number.isFinite(targetDurationMs) && targetDurationMs >= 10000 ? `${Math.round(targetDurationMs / 1000)} seconds` : "";
+  return [
+    "SALVIAN AI PREMIUM MUSIC + VOCAL STANDARD. The user's requested style is the source of truth.",
+    rawStyle || "Create the music according to the user's controls.",
+    `Language: ${language}.`,
+    tempo > 0 ? `Target tempo: ${tempo} BPM.` : "",
+    gender ? `Preferred vocal gender: ${gender}.` : "",
+    instrumental ? "INSTRUMENTAL ONLY; no vocals." : "",
+    "VOCAL CLARITY LOCK: vocal must be exceptionally clear, bright, clean, warm, full-bodied, present and intelligible. Every Indonesian consonant, vowel, syllable and word ending must remain audible. Avoid mumbling, swallowed words, nasal/dull tone, robotic tone, excessive reverb and buried vocals.",
+    "VOCAL EXPRESSION: sing naturally and confidently with a strong, beautiful, melodic dangdut cengkok and tasteful melisma/vibrato. Cengkok must decorate sustained vowels and never obscure the lyric words. Vocal should be merdu, lantang, terang and emotionally expressive without sounding harsh.",
+    "QASIDAH/SHOLAWAT MODE: when the concept asks for qasidah, sholawat, religi or Islami, make the Islamic character unmistakable and deep. Use a soulful sholawat melodic feeling, devotional phrasing, tasteful melismatic turns and a reverent emotional atmosphere. Do not reduce it to generic pop.",
+    "DANGDUT SHOLAWAT MODE: when dangdut is requested with sholawat/religi, make the dangdut identity strong in the groove, bass, kick, percussion, kendang-style accents, fills and melodic ornaments while keeping the sholawat/religious melodic character prominent. For slow requests, keep the tempo slow and devotional while retaining tasteful dangdut phrasing.",
+    "MUSIC IMPACT + MIX: punchy but smooth; strong kick/bass and rhythmic accents; clean fills and transitions; full and round low end; clean mids; open bright highs; clear vocal separation; controlled dynamics; no muddy bass, boxy mids, harsh highs, clipping or excessive reverb.",
+    "LYRIC LOCK: use the supplied lyrics exactly and in their original order. Do not rewrite, paraphrase, translate, summarize, invent, omit or replace lyric words. Preserve the line/section flow and make the diction intelligible. Fit the lyrics naturally to the musical phrases instead of flattening or randomly repeating them.",
+    referenceId ? "AUDIO REFERENCE ACTIVE: use the reference as a primary musical guide for groove, beat placement, tempo feel, melodic contour, vocal melody, phrasing, arrangement flow, sections, transitions and production character. Preserve its recognizable musical logic while creating an original result." : "",
+    vocalId ? "VOCAL REFERENCE ACTIVE: preserve the selected vocal identity/timbre and combine it with the requested clear, bright, warm and expressive vocal standard." : "",
+    referenceId && vocalId ? "REFERENCE + VOCAL: keep the reference music identity and selected vocal identity together; do not replace either with generic music or a generic voice." : "",
+    targetDuration ? `Target duration: approximately ${targetDuration}.` : "",
+    "STYLE LOCK: every explicit genre, rhythm, mood, cultural/religious character, remix type and production term requested by the user is mandatory. Never substitute a different dominant genre.",
+  ].filter(Boolean).join("\n");
+}
+
 function buildElevenPrompt(body: Record<string, unknown>) {
   const lyrics = String(body.lyrics || "").trim();
-  const concept = buildUserMusicDirective(body, "eleven");
+  const concept = buildPremiumMusicDirective(body);
   const instrumental = body.instrumental === true;
   const arrangement = instrumental
     ? "Use a coherent instrumental arrangement with an immediate identity, development, variation, climax and clean ending."
     : "Use a coherent song arrangement with intro, verses, chorus, development/bridge, final chorus and outro when appropriate to the requested style.";
-  const lyricsBudget = Math.max(0, 4000 - concept.length - arrangement.length - 180);
+  const lyricsBudget = Math.max(0, 4000 - concept.length - arrangement.length - 220);
   const clippedLyrics = lyrics.slice(0, lyricsBudget);
   return [
     "Create an original song with Music v2.5.",
     concept,
     arrangement,
-    "PROMPT ADHERENCE: The user's concept is the source of truth. Make the requested style clearly recognizable from rhythm, harmony, instrumentation, vocal delivery, arrangement and production throughout the track. Do not drift into a different dominant genre or generic pop unless the user explicitly requests it.",
+    "PROMPT ADHERENCE: the user's concept and quality standard are mandatory throughout the complete track. Do not drift into another dominant genre or generic pop.",
     instrumental ? "INSTRUMENTAL ONLY." : "Use the supplied lyrics as the lyrical source and do not replace them with unrelated lyrics.",
     clippedLyrics ? `LYRICS:\n${clippedLyrics}` : "",
   ].filter(Boolean).join("\n\n").slice(0, 4100);
@@ -314,15 +345,16 @@ export async function POST(request: NextRequest) {
       const gender = String(body.gender || "").trim().toLowerCase();
       const hasReference = typeof body.reference_id === "string" && Boolean(body.reference_id.trim());
       const hasVoice = typeof body.vocal_id === "string" && Boolean(body.vocal_id.trim());
+      const premiumDirective = buildPremiumMusicDirective(body);
       let generated: { response: Response; data: any };
       if (hasReference && hasVoice) {
-        generated = await sunoRequest("/api/music/voice-profile/cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "suno-v6", voice_id: String(body.vocal_id), song_clip_id: String(body.reference_id), lyrics: lyrics.slice(0, 3000), style_requirements: style || "Follow the reference music's rhythm, arrangement and production while singing the supplied original lyrics.", title, vocal_gender: gender, audio_weight: 0.85, max_mode: false }) });
+        generated = await sunoRequest("/api/music/voice-profile/cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "suno-v6", voice_id: String(body.vocal_id), song_clip_id: String(body.reference_id), lyrics: lyrics.slice(0, 3000), style_requirements: premiumDirective, title, vocal_gender: gender, audio_weight: 0.85, max_mode: false }) });
       } else if (hasVoice) {
-        generated = await sunoRequest("/api/music/voice-profile/cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "suno-v6", voice_id: String(body.vocal_id), lyrics: lyrics.slice(0, 3000), style_requirements: style || "Create an original arrangement for the supplied lyrics using the selected voice profile.", title, vocal_gender: gender, max_mode: false }) });
+        generated = await sunoRequest("/api/music/voice-profile/cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "suno-v6", voice_id: String(body.vocal_id), lyrics: lyrics.slice(0, 3000), style_requirements: premiumDirective, title, vocal_gender: gender, max_mode: false }) });
       } else if (hasReference) {
-        generated = await sunoRequest("/api/music/generate-from-source", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "suno-v6", sourceClipId: String(body.reference_id), prompt: lyrics.slice(0, 3000), customMode: true, style: style || "Preserve the reference track's broad rhythm, arrangement and production character", title, instrumental: body.instrumental === true, vocalGender: gender, audio_weight: 0.85, waitAudio: false }) });
+        generated = await sunoRequest("/api/music/generate-from-source", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "suno-v6", sourceClipId: String(body.reference_id), prompt: `${premiumDirective}\n\nLYRICS:\n${lyrics.slice(0, 3000)}`, customMode: true, style: premiumDirective, title, instrumental: body.instrumental === true, vocalGender: gender, audio_weight: 0.85, waitAudio: false }) });
       } else {
-        const payload: ProviderData = { model: "suno-v6", lyrics: lyrics.slice(0, 3000), style_tags: style || "pop, modern, emotional", song_title: title, instrumental: body.instrumental === true };
+        const payload: ProviderData = { model: "suno-v6", lyrics: lyrics.slice(0, 3000), style_tags: premiumDirective || "pop, modern, emotional", song_title: title, instrumental: body.instrumental === true };
         if (!body.instrumental && ["male", "female", "m", "f"].includes(gender)) payload.vocal_gender = gender;
         if (typeof body.styleWeight === "number") payload.style_weight = Math.min(Math.max(body.styleWeight, 0), 1);
         if (typeof body.weirdness === "number") payload.weirdness_constraint = Math.min(Math.max(body.weirdness, 0), 1);
