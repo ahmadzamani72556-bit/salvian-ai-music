@@ -167,6 +167,7 @@ export async function POST(request: NextRequest) {
   const title = text(body.title) || "Salvian AI Music — Reference Remix";
   const referenceUrl = text(body.reference_url || body.referenceUrl);
   const legacyReferenceId = text(body.reference_id || body.referenceId);
+  const effectiveReferenceUrl = referenceUrl || (/^https?:\/\//i.test(legacyReferenceId) ? legacyReferenceId : "");
   const suppliedRemixUploadId = text(body.remix_upload_id || body.remixUploadId);
   const tempoRaw = Number(body.tempo || 0);
   const tempo = Number.isFinite(tempoRaw) ? Math.max(0, Math.round(tempoRaw)) : 0;
@@ -183,8 +184,11 @@ export async function POST(request: NextRequest) {
   try {
     let remixUploadId = suppliedRemixUploadId;
 
-    if (!remixUploadId && referenceUrl) {
-      const uploaded = await murekaUploadUrl(referenceUrl);
+    // The browser stores the original audio in Blob first. Whether it arrives
+    // as reference_url or the legacy reference_id field, always convert that
+    // exact URL to Mureka's purpose=remix upload before generation.
+    if (!remixUploadId && effectiveReferenceUrl) {
+      const uploaded = await murekaUploadUrl(effectiveReferenceUrl);
       remixUploadId = uploaded.id;
     }
 

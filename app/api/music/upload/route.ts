@@ -44,8 +44,11 @@ if(engine==="mureka"){
 else if(engine==="suno_v6"){if(!file)throw new Error("Suno memerlukan file langsung.");if(purpose==="remix")return NextResponse.json({success:false,error:"Mode Remix penuh saat ini hanya tersedia untuk Mureka."},{status:400});result=await sunoUpload(file,purpose==="voice"?"voice":"reference");referenceId=result.id;}
 else return NextResponse.json({success:false,error:"Mesin musik tidak dikenal."},{status:400});
 if(!result.id||typeof result.id!=="string")throw new Error("Mesin musik tidak mengembalikan ID audio yang dapat digunakan.");
-const stage2ClientId=referenceId||"";
-const response=NextResponse.json({success:true,id:stage2ClientId||result.id,reference_id:referenceId||null,reference_url:fileUrl||null,purpose:purpose==="remix"?"reference":purpose,engine,stage2Reference:Boolean(referenceId||fileUrl),stage2Ready:Boolean(stage2RemixId),remix_upload_id:stage2RemixId||null,warning:referenceWarning||null,data:result.data});
+// For Blob-backed Stage-1 uploads, the storage URL is the reference handle.
+// Returning it as `id` keeps the existing client state wired to the exact
+// audio that was selected, while Stage-2 performs the real Mureka upload.
+const stage2ClientId=referenceId||fileUrl||"";
+const response=NextResponse.json({success:true,id:stage2ClientId||result.id,reference_id:referenceId||fileUrl||null,reference_url:fileUrl||null,purpose:purpose==="remix"?"reference":purpose,engine,stage2Reference:Boolean(referenceId||fileUrl),stage2Ready:Boolean(stage2RemixId),remix_upload_id:stage2RemixId||null,warning:referenceWarning||null,data:result.data});
 if(stage2RemixId&&engine==="mureka"){response.cookies.set("salvian_stage2_pending","1",stage2CookieOptions("/api/music"));response.cookies.set("salvian_stage2_remix_id",stage2RemixId,stage2CookieOptions("/api/music"));response.cookies.set("salvian_stage2_remix_id_root",stage2RemixId,stage2CookieOptions("/"));}
 return response;
 }catch(error){console.error("SALVIAN MUSIC upload error",error);return NextResponse.json({success:false,error:error instanceof Error?error.message:"Upload audio gagal."},{status:500});}}
