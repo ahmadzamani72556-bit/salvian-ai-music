@@ -11,7 +11,14 @@ export async function GET(request: NextRequest) {
   const userId = workspace(request);
   if (!userId) return NextResponse.json({ success: false, error: "Workspace Music belum siap." }, { status: 400 });
   try {
-    const projects = await listMusicProjectsServer(userId);
+    const rows = await listMusicProjectsServer(userId);
+    const projects = rows.map((project: any) => ({
+      ...project,
+      // The database uses audio_url, while the Studio UI consumes audio.
+      // Keep both fields so older/newer UI code remains compatible.
+      audio: project.audio_url ?? null,
+      task_id: project.task_id ?? null,
+    }));
     return NextResponse.json({ success: true, projects });
   } catch (error) {
     console.error("MUSIC LIBRARY SERVER READ ERROR", error);
