@@ -24,10 +24,7 @@ function getWorkspaceId() {
   if (!id) { id = crypto.randomUUID(); window.localStorage.setItem(key, id); }
   return id;
 }
-
-function headersFor(workspace: string, json = false) {
-  return json ? { "Content-Type": "application/json", "X-Music-Workspace": workspace } : { "X-Music-Workspace": workspace };
-}
+function headersFor(workspace: string, json = false) { return json ? { "Content-Type": "application/json", "X-Music-Workspace": workspace } : { "X-Music-Workspace": workspace }; }
 
 export default function PremiumMusicStudio() {
   const [workspace, setWorkspace] = useState("");
@@ -59,89 +56,45 @@ export default function PremiumMusicStudio() {
   const fileVocal = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const loadLibrary = async (id = workspace) => {
-    if (!id) return;
-    const res = await fetch("/api/projects", { headers: headersFor(id), cache: "no-store" });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) setProjects(Array.isArray(data.projects) ? data.projects : []);
-  };
-
+  const loadLibrary = async (id = workspace) => { if (!id) return; const res = await fetch("/api/projects", { headers: headersFor(id), cache: "no-store" }); const data = await res.json().catch(() => ({})); if (res.ok) setProjects(Array.isArray(data.projects) ? data.projects : []); };
   useEffect(() => { const id = getWorkspaceId(); setWorkspace(id); void loadLibrary(id); }, []);
   useEffect(() => { if (active === "library") void loadLibrary(); }, [active]);
 
   const uploadFile = async (file: File, purpose: "reference" | "voice") => {
-    if (!workspace) return;
-    if (file.size > 10 * 1024 * 1024) { setNotice("Ukuran file maksimal 10 MB."); return; }
-    const form = new FormData(); form.append("file", file); form.append("purpose", purpose); setBusy(true);
-    setNotice(purpose === "reference" ? "Mengunggah audio referensi ke mesin musik…" : "Membuat karakter vokal AI…");
-    try {
-      const res = await fetch("/api/music/upload", { method: "POST", headers: headersFor(workspace), body: form });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Upload gagal.");
-      if (purpose === "reference") { setReferenceId(String(data.id || "")); setReferenceName(file.name); } else { setVocalId(String(data.vocal_id || "")); setVocalName(file.name); }
-      setNotice("Berhasil. File siap dipakai pada pembuatan musik.");
-    } catch (e) { setNotice(e instanceof Error ? e.message : "Upload gagal."); } finally { setBusy(false); }
+    if (!workspace) return; if (file.size > 10 * 1024 * 1024) { setNotice("Ukuran file maksimal 10 MB."); return; }
+    const form = new FormData(); form.append("file", file); form.append("purpose", purpose); setBusy(true); setNotice(purpose === "reference" ? "Mengunggah audio referensi ke mesin musik…" : "Membuat karakter vokal AI…");
+    try { const res = await fetch("/api/music/upload", { method: "POST", headers: headersFor(workspace), body: form }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Upload gagal."); if (purpose === "reference") { setReferenceId(String(data.id || "")); setReferenceName(file.name); } else { setVocalId(String(data.vocal_id || "")); setVocalName(file.name); } setNotice("Berhasil. File siap dipakai pada pembuatan musik."); } catch (e) { setNotice(e instanceof Error ? e.message : "Upload gagal."); } finally { setBusy(false); }
   };
 
   const pollTask = async (taskId: string, endpoint = "/api/music", engine = musicEngine) => {
-    if (!workspace || !taskId) return;
-    setPolling(true);
-    for (let i = 0; i < 40; i++) {
-      await new Promise(r => setTimeout(r, 6000));
-      try {
-        const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ action: "status", taskId, musicEngine: engine }) });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Status generasi gagal dibaca.");
-        if (data.finished) { setNotice(data.audio ? `${data.musicEngine || "Musik"} selesai dan tersimpan di Library.` : data.failed ? "Generasi musik gagal." : "Generasi selesai."); await loadLibrary(); setPolling(false); return; }
-        setNotice(`Musik sedang dibuat… ${data.status || "diproses"}`);
-      } catch (e) { setNotice(e instanceof Error ? e.message : "Status generasi gagal dibaca."); }
-    }
+    if (!workspace || !taskId) return; setPolling(true);
+    for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 6000)); try { const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ action: "status", taskId, musicEngine: engine }) }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Status generasi gagal dibaca."); if (data.finished) { setNotice(data.audio ? `${data.musicEngine || "Musik"} selesai dan tersimpan di Library.` : data.failed ? "Generasi musik gagal." : "Generasi selesai."); await loadLibrary(); setPolling(false); return; } setNotice(`Musik sedang dibuat… ${data.status || "diproses"}`); } catch (e) { setNotice(e instanceof Error ? e.message : "Status generasi gagal dibaca."); } }
     setPolling(false); setNotice("Generasi masih berjalan. Library dapat diperiksa kembali nanti.");
   };
 
   const generate = async () => {
-    if (!workspace) return;
-    if (!lyrics.trim() && !instrumental) { setNotice("Masukkan lirik atau aktifkan mode instrumental."); return; }
+    if (!workspace) return; if (!lyrics.trim() && !instrumental) { setNotice("Masukkan lirik atau aktifkan mode instrumental."); return; }
     setBusy(true); setNotice(`Mengirim karya ke ${engineCards.find(e => e.id === musicEngine)?.title || "mesin musik"}…`);
     try {
       const title = (lyrics.split("\n").find(Boolean) || `${musicEngine} Music`).replace(/^\[.*?\]\s*/, "").slice(0, 70);
       const style = `${prompt.slice(0, 900)}${prompt ? ", " : ""}${language}, ${tempo} BPM, ${gender} vocal`;
       const endpoint = "/api/music";
       const body = { title, lyrics: lyrics.trim(), style, model: musicEngine === "mureka" ? modelMap[model] : musicEngine, musicEngine, n: 1, stream: true, gender, language, tempo, instrumental, reference_id: referenceId || undefined, vocal_id: vocalId || undefined };
-      const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify(body) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Gagal membuat musik.");
-      setNotice(data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.`);
-      await loadLibrary();
-      if (data.taskId && !data.audio) void pollTask(String(data.taskId), endpoint, musicEngine);
+      const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify(body) }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Gagal membuat musik.");
+      setNotice(data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.`); await loadLibrary(); if (data.taskId && !data.audio) void pollTask(String(data.taskId), endpoint, musicEngine);
     } catch (e) { setNotice(e instanceof Error ? e.message : "Gagal membuat musik."); } finally { setBusy(false); }
   };
 
   const ask = async (event?: FormEvent) => {
-    event?.preventDefault(); const message = chatInput.trim(); if (!message || chatBusy) return;
-    const history = messages.slice(-10); setChatInput(""); setMessages(prev => [...prev, { role: "user", content: message }]); setChatBusy(true);
-    try {
-      const res = await fetch("/api/assistant", { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ message, history }) });
-      const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Asisten AI sedang tidak tersedia.");
-      setMessages(prev => [...prev, { role: "assistant", content: String(data.answer || "Maaf, saya belum dapat menjawab.") }]);
-    } catch (e) { setMessages(prev => [...prev, { role: "assistant", content: e instanceof Error ? e.message : "Terjadi kesalahan." }]); } finally { setChatBusy(false); }
+    event?.preventDefault(); const message = chatInput.trim(); if (!message || chatBusy) return; const history = messages.slice(-10); setChatInput(""); setMessages(prev => [...prev, { role: "user", content: message }]); setChatBusy(true);
+    try { const res = await fetch("/api/assistant", { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ message, history }) }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Asisten AI sedang tidak tersedia."); setMessages(prev => [...prev, { role: "assistant", content: String(data.answer || "Maaf, saya belum dapat menjawab.") }]); } catch (e) { setMessages(prev => [...prev, { role: "assistant", content: e instanceof Error ? e.message : "Terjadi kesalahan." }]); } finally { setChatBusy(false); }
   };
 
   const generateLyrics = async () => {
-    if (!prompt.trim()) { setNotice("Isi deskripsi musik dulu agar Lirik Assistant punya konteks."); return; }
-    setLyricBusy(true);
-    try {
-      const res = await fetch("/api/assistant", { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ message: `Buatkan lirik lagu original berbahasa ${language} berdasarkan konsep ini: ${prompt}. Gunakan struktur [Verse], [Pre-Chorus], [Chorus], [Verse 2], [Bridge], [Chorus]. Jangan meniru artis tertentu. Hanya berikan lirik.`, history: [] }) });
-      const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Lirik Assistant gagal.");
-      setLyrics(String(data.answer || "")); setNotice("Lirik berhasil dibuat oleh Lirik Assistant.");
-    } catch (e) { setNotice(e instanceof Error ? e.message : "Lirik Assistant gagal."); } finally { setLyricBusy(false); }
+    if (!prompt.trim()) { setNotice("Isi deskripsi musik dulu agar Lirik Assistant punya konteks."); return; } setLyricBusy(true);
+    try { const res = await fetch("/api/assistant", { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ message: `Buatkan lirik lagu original berbahasa ${language} berdasarkan konsep ini: ${prompt}. Gunakan struktur [Verse], [Pre-Chorus], [Chorus], [Verse 2], [Bridge], [Chorus]. Jangan meniru artis tertentu. Hanya berikan lirik.`, history: [] }) }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Lirik Assistant gagal."); setLyrics(String(data.answer || "")); setNotice("Lirik berhasil dibuat oleh Lirik Assistant."); } catch (e) { setNotice(e instanceof Error ? e.message : "Lirik Assistant gagal."); } finally { setLyricBusy(false); }
   };
-
-  const deleteProject = async (id: string) => {
-    if (!workspace) return;
-    const res = await fetch(`/api/projects?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: headersFor(workspace) });
-    if (res.ok) { setProjects(prev => prev.filter(p => p.id !== id)); setNotice("Project dihapus dari Library Music."); }
-  };
+  const deleteProject = async (id: string) => { if (!workspace) return; const res = await fetch(`/api/projects?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: headersFor(workspace) }); if (res.ok) { setProjects(prev => prev.filter(p => p.id !== id)); setNotice("Project dihapus dari Library Music."); } };
   const togglePlay = (url: string) => { if (playing === url) { audioRef.current?.pause(); setPlaying(null); return; } audioRef.current?.pause(); const audio = new Audio(url); audioRef.current = audio; setPlaying(url); audio.play().catch(() => setNotice("Audio tidak dapat diputar di perangkat ini.")); audio.onended = () => setPlaying(null); };
   const nav = [["studio", "Studio Musik", Music2], ["assistant", "Asisten AI", Bot], ["library", "Library", Library], ["models", "Model AI", Sparkles], ["style", "Style & Genre", AudioLines], ["voice", "Voice & Vocal", Mic2], ["reference", "Audio Referensi", Headphones]] as const;
   const modelCards: { id: Model; title: string; points: string[] }[] = [{ id: "Standard", title: "Cepat & Efisien", points: ["Kualitas baik", "Ide cepat", "Mureka auto"] }, { id: "Pro", title: "Kualitas Lebih Tinggi", points: ["Audio jernih", "Struktur detail", "Mureka 9"] }, { id: "Adroit", title: "Model Paling Elite", points: ["Aransemen kompleks", "Kualitas premium", "Mureka 9.5"] }];
@@ -152,12 +105,12 @@ export default function PremiumMusicStudio() {
     <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_75%_5%,rgba(168,85,247,.16),transparent_30%),radial-gradient(circle_at_20%_80%,rgba(37,99,235,.12),transparent_32%)]" />
     <div className="relative flex min-h-screen">
       <aside className="hidden w-[245px] shrink-0 border-r border-white/10 bg-[#050610]/95 lg:flex lg:flex-col">
-        <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5"><img src="/salvian-ai-logo.svg" alt="SALVIAN AI" className="h-12 w-12 rounded-2xl"/><div><div className="text-xl font-black">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[9px] tracking-[.32em] text-zinc-500">MUSIC STUDIO</div></div></div>
+        <div className="border-b border-white/10 px-5 py-5"><div className="text-xl font-black">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[9px] tracking-[.32em] text-zinc-500">MUSIC STUDIO</div></div>
         <div className="flex-1 overflow-y-auto p-3">{nav.map(([id, label, Icon]) => <button key={id} onClick={() => id === "assistant" ? setChatOpen(true) : setActive(id)} className={`mb-1 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition ${active === id ? "bg-gradient-to-r from-violet-600/80 to-fuchsia-500/50 text-white shadow-lg" : "text-zinc-400 hover:bg-white/5 hover:text-white"}`}><Icon size={19}/><span>{label}</span>{id === "assistant" && <span className="ml-auto rounded-full border border-violet-400/40 px-1.5 py-0.5 text-[8px] text-violet-200">AI</span>}</button>)}</div>
         <div className="p-4"><div className="rounded-3xl border border-violet-400/15 bg-violet-500/5 p-4"><Sparkles size={17} className="text-violet-300"/><p className="mt-2 text-xs leading-5 text-zinc-500">Musik adalah bahasa jiwa. AI adalah alatnya.</p></div></div>
       </aside>
       <main className="min-w-0 flex-1 overflow-y-auto pb-24">
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-white/10 bg-[#05050c]/85 px-4 py-4 backdrop-blur-xl sm:px-7"><div className="flex items-center gap-2"><img src="/salvian-ai-logo.svg" alt="SALVIAN AI" className="h-9 w-9 rounded-xl"/><div><div className="font-black">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[8px] tracking-[.3em] text-zinc-500">MUSIC STUDIO</div></div></div><button onClick={() => setChatOpen(true)} className="rounded-2xl border border-violet-400/25 bg-violet-500/10 px-3 py-2 text-sm font-bold text-violet-100"><MessageCircle size={17} className="inline mr-2"/>Asisten AI</button></header>
+        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-white/10 bg-[#05050c]/85 px-4 py-4 backdrop-blur-xl sm:px-7"><div><div className="font-black">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[8px] tracking-[.3em] text-zinc-500">MUSIC STUDIO</div></div><button onClick={() => setChatOpen(true)} className="rounded-2xl border border-violet-400/25 bg-violet-500/10 px-3 py-2 text-sm font-bold text-violet-100"><MessageCircle size={17} className="inline mr-2"/>Asisten AI</button></header>
         <div className="mx-auto w-full max-w-6xl p-4 sm:p-7">
           <div className="mb-7 flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.3em] text-violet-300">Music Creator</p><h1 className="mt-2 text-3xl font-black sm:text-4xl">Studio Musik AI</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">Buat lagu, instrumental, vokal AI, lirik, dan simpan hasilnya di Library Music.</p></div><div className="rounded-2xl border border-white/10 bg-white/[.03] px-4 py-3 text-xs text-zinc-500">Mesin aktif: <span className="font-bold text-violet-200">{selectedEngine.title} {selectedEngine.subtitle}</span></div></div>
           {statusLabel && <div className="mb-5 rounded-2xl border border-violet-400/15 bg-violet-500/5 px-4 py-3 text-sm text-violet-100">{statusLabel}</div>}
@@ -173,7 +126,6 @@ export default function PremiumMusicStudio() {
               <button disabled={busy || polling} onClick={generate} className="w-full rounded-3xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-5 py-4 text-base font-black shadow-2xl shadow-violet-950/30 disabled:opacity-40"><Music2 size={19} className="inline mr-2"/>{polling ? `Musik ${selectedEngine.title} sedang dibuat…` : busy ? "Mengirim…" : `Buat Musik · ${selectedEngine.title}`}</button>
             </div>
           </section>}
-
           {active === "models" && <section><h2 className="mb-5 text-2xl font-black">Mesin Musik</h2><div className="grid gap-4 md:grid-cols-3">{engineCards.map(card => <button key={card.id} onClick={() => { setMusicEngine(card.id); setActive("studio"); }} className={`rounded-3xl border p-6 text-left ${musicEngine === card.id ? "border-violet-400/50 bg-violet-500/10" : "border-white/10 bg-white/[.03]"}`}><Sparkles className="text-violet-300"/><h3 className="mt-4 text-xl font-black">{card.title} <span className="text-xs tracking-[.18em] text-violet-300">{card.subtitle}</span></h3><p className="mt-2 text-sm text-zinc-500">{card.points.join(" • ")}</p></button>)}</div></section>}
           {active === "style" && <section><h2 className="text-2xl font-black">Style & Genre</h2><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">{presets.map(p => <button key={p} onClick={() => { setPrompt(p); setActive("studio"); }} className="rounded-2xl border border-white/10 bg-white/[.03] p-5 text-left font-bold hover:border-violet-400/30">{p}<p className="mt-1 text-xs font-normal text-zinc-600">Gunakan sebagai konsep lagu</p></button>)}</div></section>}
           {active === "voice" && <section className="rounded-3xl border border-white/10 bg-white/[.03] p-6"><h2 className="text-2xl font-black">Voice & Vocal</h2><p className="mt-2 text-sm text-zinc-500">Upload audio vokal untuk membuat karakter vokal AI.</p><input ref={fileVocal} type="file" accept=".mp3,.m4a" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) void uploadFile(f, "voice"); }}/><button onClick={() => fileVocal.current?.click()} className="mt-6 rounded-2xl bg-violet-600 px-5 py-3 font-bold"><Upload size={17} className="inline mr-2"/>Upload Vocal</button>{vocalName && <p className="mt-4 text-sm text-zinc-400">{vocalName} {vocalId && "✓ siap"}</p>}</section>}
