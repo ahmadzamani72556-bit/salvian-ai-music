@@ -4,8 +4,8 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Check, Copy, MessageCircle, Save, Send, Sparkles, Trash2, X } from "lucide-react";
 
 type MessageRole = "user" | "assistant";
-type Message = { role: MessageRole; content: string; id: string };
-type SavedMessage = { role: "assistant"; content: string; id: string; savedAt: number };
+type Message = { id: string; role: MessageRole; content: string };
+type SavedMessage = { id: string; role: "assistant"; content: string; savedAt: number };
 
 const welcome: Message = {
   id: "welcome",
@@ -18,45 +18,43 @@ const SAVED_KEY = "salvian-ai-music-assistant-saved-v2";
 const MAX_STORED_MESSAGES = 40;
 const MAX_SAVED_MESSAGES = 50;
 
-const headingNames = "judul|intro|verse(?:\\s*\\d+)?|pre[- ]?chorus|chorus|refrain|bridge|interlude|outro|ending";
-const lyricHeadingPattern = new RegExp(`^(?:\\*{0,2}\\s*)?(?:\\[|\\()?\\s*(${headingNames})\\b[^\\n]*?(?:\\]|\\))?\\s*(?:\\*{0,2})\\s*:?\\s*$`, "i");
-const inlineBracketHeadingPattern = new RegExp(`\\s*\\*{0,2}\\s*[\\[\\(]\\s*(${headingNames})\\b[^\\]\\)]*[\\]\\)]\\s*\\*{0,2}\\s*`, "gi");
-const inlineBoldHeadingPattern = new RegExp(`\\s*\\*{2}\\s*(${headingNames})\\b[^*]*\\*{2}\\s*`, "gi");
+const lyricHeadingPattern = /^(?:\*{0,2}\s*)?(?:\[|\()?\s*(judul|intro|verse(?:\s*\d+)?|pre[- ]?chorus|chorus|refrain|bridge|interlude|outro|ending)\b[^\n]*?(?:\]|\))?\s*(?:\*{0,2})\s*:?\s*$/i;
+const inlineHeadingPattern = /\s*\*{0,2}\s*[\[(]\s*(judul|intro|verse(?:\s*\d+)?|pre[- ]?chorus|chorus|refrain|bridge|interlude|outro|ending)\b[^\])]*[\])]\s*\*{0,2}\s*/gi;
+const boldHeadingPattern = /\s*\*{2}\s*(judul|intro|verse(?:\s*\d+)?|pre[- ]?chorus|chorus|refrain|bridge|interlude|outro|ending)\b[^*]*\*{2}\s*/gi;
 
-function createId() {
+function createId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function cleanHeading(value: string) {
-  return value.replace(/[()[\\]]/g, "").replace(/^\\*+|\\*+$/g, "").trim();
+function cleanHeading(value: string): string {
+  return value.replace(/[()[\]]/g, "").replace(/^\*+|\*+$/g, "").trim();
 }
 
-function cleanAssistantText(text: string) {
-  let value = text.replace(/\\r\\n/g, "\\n").replace(/\\r/g, "\\n").trim();
-  value = value.replace(inlineBracketHeadingPattern, (_, heading: string) => `\\n\\n[${cleanHeading(heading)}]\\n\\n`);
-  value = value.replace(inlineBoldHeadingPattern, (_, heading: string) => `\\n\\n[${cleanHeading(heading)}]\\n\\n`);
-  value = value.replace(/[ \\t]+\\n/g, "\\n").replace(/\\n{3,}/g, "\\n\\n");
-  return value.trim();
+function cleanAssistantText(text: string): string {
+  let value = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  value = value.replace(inlineHeadingPattern, (_, heading: string) => `\n\n[${cleanHeading(heading)}]\n\n`);
+  value = value.replace(boldHeadingPattern, (_, heading: string) => `\n\n[${cleanHeading(heading)}]\n\n`);
+  return value.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function renderAssistantText(text: string) {
   const normalized = cleanAssistantText(text);
-  const blocks = normalized.split(/\\n\\s*\\n/).map(block => block.trim()).filter(Boolean);
+  const blocks = normalized.split(/\n\s*\n/).map(block => block.trim()).filter(Boolean);
 
   return blocks.map((block, blockIndex) => {
-    const lines = block.split("\\n").map(line => line.trim()).filter(Boolean);
+    const lines = block.split("\n").map(line => line.trim()).filter(Boolean);
     if (!lines.length) return null;
-
     const heading = cleanHeading(lines[0]);
+
     if (lyricHeadingPattern.test(lines[0])) {
       return (
         <div key={`${blockIndex}-${lines[0]}`} className="mt-4 first:mt-0 rounded-2xl border border-violet-400/15 bg-violet-500/5 px-4 py-3">
           <div className="mb-2 text-sm font-extrabold uppercase tracking-[0.12em] text-violet-200">{heading}</div>
           <div className="space-y-1.5">
             {lines.slice(1).map((line, index) => (
-              <div key={index} className="leading-7 text-zinc-100">{line.replace(/^\\*+|\\*+$/g, "").trim()}</div>
+              <div key={index} className="leading-7 text-zinc-100">{line.replace(/^\*+|\*+$/g, "").trim()}</div>
             ))}
           </div>
         </div>
@@ -66,9 +64,7 @@ function renderAssistantText(text: string) {
     return (
       <div key={`${blockIndex}-${lines[0]}`} className="mb-3 last:mb-0">
         {lines.map((line, index) => (
-          <div key={index} className="min-h-[1.75rem] leading-7 text-zinc-200">
-            {line.replace(/^\\*+|\\*+$/g, "").trim() || "\\u00a0"}
-          </div>
+          <div key={index} className="min-h-[1.75rem] leading-7 text-zinc-200">{line.replace(/^\*+|\*+$/g, "").trim() || "\u00a0"}</div>
         ))}
       </div>
     );
@@ -126,12 +122,16 @@ export default function FullscreenAiAssistant() {
 
   useEffect(() => {
     if (!hydrated) return;
-    try { window.localStorage.setItem(CONVERSATION_KEY, JSON.stringify(messages.slice(-MAX_STORED_MESSAGES))); } catch {}
+    try {
+      window.localStorage.setItem(CONVERSATION_KEY, JSON.stringify(messages.slice(-MAX_STORED_MESSAGES)));
+    } catch {}
   }, [messages, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
-    try { window.localStorage.setItem(SAVED_KEY, JSON.stringify(savedMessages.slice(-MAX_SAVED_MESSAGES))); } catch {}
+    try {
+      window.localStorage.setItem(SAVED_KEY, JSON.stringify(savedMessages.slice(-MAX_SAVED_MESSAGES)));
+    } catch {}
   }, [savedMessages, hydrated]);
 
   useEffect(() => {
@@ -139,7 +139,7 @@ export default function FullscreenAiAssistant() {
       const target = event.target as HTMLElement | null;
       const button = target?.closest("button");
       if (!button) return;
-      const label = (button.textContent || "").replace(/\\s+/g, " ").trim();
+      const label = (button.textContent || "").replace(/\s+/g, " ").trim();
       if (!label.includes("Asisten AI")) return;
       event.preventDefault();
       event.stopPropagation();
@@ -172,12 +172,15 @@ export default function FullscreenAiAssistant() {
     const message = input.trim();
     if (!message || busy) return;
 
-    const history = messages.filter(item => item.id !== "welcome").slice(-4).map(({ role, content }) => ({ role, content: content.slice(0, 1600) }));
+    const history = messages
+      .filter(item => item.id !== "welcome")
+      .slice(-4)
+      .map(({ role, content }) => ({ role, content: content.slice(0, 1600) }));
     const userMessage: Message = { id: createId(), role: "user", content: message };
     const assistantMessage: Message = { id: createId(), role: "assistant", content: "" };
 
     setInput("");
-    setMessages(previous => [...previous, userMessage, assistantMessage].slice(-MAX_STORED_MESSAGES));
+    setMessages((previous: Message[]): Message[] => [...previous, userMessage, assistantMessage].slice(-MAX_STORED_MESSAGES));
     setBusy(true);
 
     try {
@@ -191,10 +194,10 @@ export default function FullscreenAiAssistant() {
       if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "Asisten AI sedang tidak tersedia.");
       const answer = typeof data.answer === "string" ? data.answer.trim() : "";
       if (!answer) throw new Error(typeof data.error === "string" ? data.error : "Asisten AI belum menghasilkan jawaban.");
-      setMessages(previous => previous.map(item => item.id === assistantMessage.id ? { ...item, content: answer } : item));
+      setMessages((previous: Message[]): Message[] => previous.map(item => item.id === assistantMessage.id ? { ...item, content: answer } : item));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Terjadi kesalahan saat menghubungkan ke Asisten AI.";
-      setMessages(previous => previous.map(item => item.id === assistantMessage.id ? { ...item, content: errorMessage } : item));
+      setMessages((previous: Message[]): Message[] => previous.map(item => item.id === assistantMessage.id ? { ...item, content: errorMessage } : item));
     } finally {
       setBusy(false);
     }
@@ -220,43 +223,31 @@ export default function FullscreenAiAssistant() {
 
   const toggleSave = (message: Message) => {
     if (message.role !== "assistant" || !message.content.trim()) return;
-    setSavedMessages(previous => {
+    setSavedMessages((previous: SavedMessage[]): SavedMessage[] => {
       const exists = previous.some(item => item.id === message.id);
       if (exists) return previous.filter(item => item.id !== message.id);
-      return [...previous, { id: message.id, role: "assistant", content: message.content, savedAt: Date.now() }].slice(-MAX_SAVED_MESSAGES);
+      const saved: SavedMessage = { id: message.id, role: "assistant", content: message.content, savedAt: Date.now() };
+      return [...previous, saved].slice(-MAX_SAVED_MESSAGES);
     });
   };
 
   const deleteMessage = (id: string) => {
     const target = messages.find(message => message.id === id);
     if (target?.role === "assistant" && target.content.trim()) {
-      setSavedMessages(previous => {
+      setSavedMessages((previous: SavedMessage[]): SavedMessage[] => {
         if (previous.some(item => item.id === target.id)) return previous;
-        return [...previous, { id: target.id, role: "assistant", content: target.content, savedAt: Date.now() }].slice(-MAX_SAVED_MESSAGES);
+        const saved: SavedMessage = { id: target.id, role: "assistant", content: target.content, savedAt: Date.now() };
+        return [...previous, saved].slice(-MAX_SAVED_MESSAGES);
       });
     }
-    setMessages(previous => previous.filter(message => message.id !== id));
+    setMessages((previous: Message[]): Message[] => previous.filter(message => message.id !== id));
   };
 
   const restoreSaved = (item: SavedMessage) => {
     const restored: Message = { id: createId(), role: "assistant", content: item.content };
-    setMessages(previous => [...previous, restored].slice(-MAX_STORED_MESSAGES));
+    setMessages((previous: Message[]): Message[] => [...previous, restored].slice(-MAX_STORED_MESSAGES));
     setShowSaved(false);
   };
-
-  const actionButtons = (item: Message) => (
-    <div className="mt-3 flex flex-wrap gap-2 border-t border-white/10 pt-3">
-      <button type="button" onClick={() => void copyMessage(item.content, item.id)} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs font-bold text-zinc-200 hover:bg-white/10">
-        {copiedId === item.id ? <Check size={15} /> : <Copy size={15} />} {copiedId === item.id ? "Tersalin" : "Salin"}
-      </button>
-      <button type="button" onClick={() => toggleSave(item)} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-violet-400/20 bg-violet-500/10 px-3 py-2 text-xs font-bold text-violet-200 hover:bg-violet-500/15">
-        <Save size={15} /> {savedIds.has(item.id) ? "Tersimpan" : "Simpan"}
-      </button>
-      <button type="button" onClick={() => deleteMessage(item.id)} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-red-400/20 bg-red-500/5 px-3 py-2 text-xs font-bold text-red-300 hover:bg-red-500/10">
-        <Trash2 size={15} /> Hapus
-      </button>
-    </div>
-  );
 
   return open ? (
     <div className="fixed inset-0 z-[9999] h-[100dvh] w-screen overflow-hidden bg-[#08080d] text-white" role="dialog" aria-modal="true" aria-label="Asisten AI SALVIAN AI MUSIC">
@@ -287,7 +278,13 @@ export default function FullscreenAiAssistant() {
                     <div className="break-words pt-1">
                       {item.content ? (item.role === "assistant" ? renderAssistantText(item.content) : <div className="whitespace-pre-wrap">{item.content}</div>) : (busy && item.role === "assistant" ? "Menjawab…" : "")}
                     </div>
-                    {item.content && item.role === "assistant" && actionButtons(item)}
+                    {item.content && item.role === "assistant" && (
+                      <div className="mt-3 flex flex-wrap gap-2 border-t border-white/10 pt-3">
+                        <button type="button" onClick={() => void copyMessage(item.content, item.id)} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs font-bold text-zinc-200 hover:bg-white/10">{copiedId === item.id ? <Check size={15} /> : <Copy size={15} />} {copiedId === item.id ? "Tersalin" : "Salin"}</button>
+                        <button type="button" onClick={() => toggleSave(item)} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-violet-400/20 bg-violet-500/10 px-3 py-2 text-xs font-bold text-violet-200 hover:bg-violet-500/15"><Save size={15} /> {savedIds.has(item.id) ? "Tersimpan" : "Simpan"}</button>
+                        <button type="button" onClick={() => deleteMessage(item.id)} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-red-400/20 bg-red-500/5 px-3 py-2 text-xs font-bold text-red-300 hover:bg-red-500/10"><Trash2 size={15} /> Hapus</button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
