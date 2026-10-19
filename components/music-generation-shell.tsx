@@ -1,22 +1,74 @@
 "use client";
 
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { Download, Music2, Play, RotateCcw } from "lucide-react";
+import { Download, Music2, Play, RotateCcw, Trash2 } from "lucide-react";
 
 type Phase = "idle" | "loading" | "result" | "error";
+type GeneratedSong = { id: string; title: string; audio: string; createdAt: number };
+
+const STORAGE_KEY = "salvian-ai-music-results-v1";
 
 export default function MusicGenerationShell({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [status, setStatus] = useState("Menyiapkan musik…");
-  const [audio, setAudio] = useState("");
   const [title, setTitle] = useState("Hasil Musik AI");
   const [error, setError] = useState("");
+  const [songs, setSongs] = useState<GeneratedSong[]>([]);
   const generationRef = useRef(0);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      if (Array.isArray(saved)) setSongs(saved.filter(item => item?.audio && item?.title));
+    } catch {
+      // Ignore malformed local history and keep the studio usable.
+    }
+  }, []);
+
+  const persistSongs = (next: GeneratedSong[]) => {
+    setSongs(next);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // The visible result remains available even if storage is unavailable.
+    }
+  };
+
+  const addSong = (audio: string, songTitle: string) => {
+    if (!audio) return;
+    const song: GeneratedSong = {
+      id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+      title: songTitle || "Hasil Musik AI",
+      audio,
+      createdAt: Date.now(),
+    };
+    setSongs(previous => {
+      const next = [song, ...previous];
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Keep the in-memory history when persistent storage is unavailable.
+      }
+      return next;
+    });
+  };
+
+  const deleteSong = (id: string) => {
+    setSongs(previous => {
+      const next = previous.filter(song => song.id !== id);
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Keep the UI deletion even if storage is unavailable.
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
 
-    const monitorGeneration = async (response: Response, endpoint: string, headers: HeadersInit, requestBody: string) => {
+    const monitorGeneration = async (response: Response, endpoint: string, headers: HeadersInit) => {
       const data = await response.clone().json().catch(() => ({}));
       if (!response.ok) {
         const message = String(data?.error || "Pembuatan musik gagal.");
@@ -26,8 +78,9 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
         return;
       }
 
+      const songTitle = title || "Hasil Musik AI";
       if (data?.audio) {
-        setAudio(String(data.audio));
+        addSong(String(data.audio), songTitle);
         setStatus("Musik selesai.");
         setPhase("result");
         return;
@@ -54,7 +107,7 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
           if (!statusResponse.ok) throw new Error(String(statusData?.error || "Status musik gagal dibaca."));
           if (statusData?.finished) {
             if (statusData?.audio) {
-              setAudio(String(statusData.audio));
+              addSong(String(statusData.audio), songTitle);
               setStatus("Musik selesai.");
               setPhase("result");
             } else if (statusData?.failed) {
@@ -85,7 +138,7 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
       if (isMusicRequest && generationRef.current > 0) {
         const endpoint = url.includes("/api/music/instrumental") ? "/api/music/instrumental" : "/api/music";
         const headers = init?.headers || {};
-        void monitorGeneration(response, endpoint, headers, body);
+        void monitorGeneration(response, endpoint, headers);
       }
       return response;
     };
@@ -105,7 +158,6 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
       if (!lyricValue && !instrumental) return;
 
       generationRef.current += 1;
-      setAudio("");
       setError("");
       setTitle((lyricValue.split("\n").find(Boolean) || "Hasil Musik AI").replace(/^\[.*?\]\s*/, "").slice(0, 70));
       setStatus("Mengirim musik ke mesin AI…");
@@ -118,22 +170,47 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
       document.removeEventListener("click", onClick, true);
       window.fetch = originalFetch;
     };
-  }, []);
+  }, [title]);
 
   const reset = () => {
     generationRef.current += 1;
     setPhase("idle");
-    setAudio("");
     setError("");
   };
+
+  const results = songs.map(song => (
+    <article key={song.id} className="rounded-3xl border border-white/10 bg-black/20 p-4 sm:p-6">
+      <div className="flex items-start gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-600/15 ring-1 ring-violet-400/20">
+          <Music2 size={20} className="text-violet-300" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="break-words text-base font-bold sm:text-lg">{song.title}</h2>
+          <p className="mt-1 text-xs text-zinc-500">Tersimpan di layar hasil lagu</p>
+        </div>
+        <button type="button" onClick={() => deleteSong(song.id)} aria-label={`Hapus ${song.title}`} className="rounded-xl p-2 text-zinc-500 hover:bg-red-500/10 hover:text-red-300">
+          <Trash2 size={18} />
+        </button>
+      </div>
+      <audio controls src={song.audio} className="mt-5 w-full" />
+      <div className="mt-4 flex flex-wrap gap-3">
+        <a href={song.audio} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-4 py-2.5 text-sm font-bold hover:bg-violet-500">
+          <Play size={16} /> Putar Lagu
+        </a>
+        <a href={song.audio} download className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold hover:bg-white/10">
+          <Download size={16} /> Simpan Hasil
+        </a>
+      </div>
+    </article>
+  ));
 
   return (
     <>
       {children}
       {phase !== "idle" && (
         <div className="fixed inset-0 z-[100] min-h-[100dvh] w-screen overflow-y-auto bg-[#02030a] text-white">
-          <div className="flex min-h-[100dvh] w-full items-center justify-center p-4 sm:p-8">
-            <section className="w-full max-w-3xl rounded-[28px] border border-white/10 bg-[#080912]/95 p-6 shadow-2xl shadow-violet-950/30 backdrop-blur-xl sm:p-10">
+          <div className="flex min-h-[100dvh] w-full items-start justify-center p-4 sm:p-8">
+            <section className="w-full max-w-3xl rounded-[28px] border border-white/10 bg-[#080912]/95 p-5 shadow-2xl shadow-violet-950/30 backdrop-blur-xl sm:p-8">
               {phase === "loading" && (
                 <div className="text-center">
                   <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-violet-600/15 ring-1 ring-violet-400/20">
@@ -145,33 +222,6 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
                   <div className="mx-auto mt-8 h-2 w-full max-w-xl overflow-hidden rounded-full bg-white/10">
                     <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-400" />
                   </div>
-                  <p className="mt-4 text-xs text-zinc-600">Proses dipantau otomatis sampai hasil lagu tersedia.</p>
-                </div>
-              )}
-
-              {phase === "result" && (
-                <div>
-                  <div className="flex flex-col items-center text-center">
-                    <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-violet-600/15 ring-1 ring-violet-400/20">
-                      <Music2 size={34} className="text-violet-300" />
-                    </div>
-                    <p className="mt-6 text-xs font-bold uppercase tracking-[.28em] text-violet-300">Hasil Lagu</p>
-                    <h1 className="mt-2 max-w-2xl break-words text-2xl font-black sm:text-3xl">{title}</h1>
-                  </div>
-                  <div className="mt-8 rounded-3xl border border-white/10 bg-black/20 p-4 sm:p-6">
-                    <audio controls autoPlay src={audio} className="w-full" />
-                    <div className="mt-4 flex flex-wrap justify-center gap-3">
-                      <a href={audio} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-sm font-bold hover:bg-violet-500">
-                        <Play size={17} /> Putar Lagu
-                      </a>
-                      <a href={audio} download className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold hover:bg-white/10">
-                        <Download size={17} /> Simpan Hasil
-                      </a>
-                    </div>
-                  </div>
-                  <button onClick={reset} className="mx-auto mt-6 flex items-center gap-2 rounded-2xl border border-white/10 px-5 py-3 text-sm font-bold text-zinc-300 hover:bg-white/5">
-                    <RotateCcw size={16} /> Kembali ke Studio
-                  </button>
                 </div>
               )}
 
@@ -181,11 +231,39 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
                   <p className="mt-6 text-xs font-bold uppercase tracking-[.28em] text-red-300">Pembuatan musik</p>
                   <h1 className="mt-2 text-2xl font-black">Terjadi kendala</h1>
                   <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-zinc-400">{error || status}</p>
-                  <button onClick={reset} className="mx-auto mt-7 flex items-center gap-2 rounded-2xl border border-white/10 px-5 py-3 text-sm font-bold hover:bg-white/5">
-                    <RotateCcw size={16} /> Kembali ke Studio
-                  </button>
                 </div>
               )}
+
+              {phase === "result" && (
+                <div className="mb-7 text-center">
+                  <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-violet-600/15 ring-1 ring-violet-400/20">
+                    <Music2 size={34} className="text-violet-300" />
+                  </div>
+                  <p className="mt-6 text-xs font-bold uppercase tracking-[.28em] text-violet-300">Hasil Lagu</p>
+                  <h1 className="mt-2 text-2xl font-black sm:text-3xl">Lagu berhasil dibuat</h1>
+                </div>
+              )}
+
+              {songs.length > 0 && (
+                <div className={phase === "loading" ? "mt-10" : "mt-2"}>
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[.22em] text-violet-300">Hasil Lagu</p>
+                      <h2 className="mt-1 text-xl font-black">Tersimpan</h2>
+                    </div>
+                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-400">{songs.length} lagu</span>
+                  </div>
+                  <div className="grid gap-4">{results}</div>
+                </div>
+              )}
+
+              {songs.length === 0 && phase !== "loading" && phase !== "error" && (
+                <p className="text-center text-sm text-zinc-500">Belum ada hasil lagu.</p>
+              )}
+
+              <button type="button" onClick={reset} className="mx-auto mt-7 flex items-center gap-2 rounded-2xl border border-white/10 px-5 py-3 text-sm font-bold text-zinc-300 hover:bg-white/5">
+                <RotateCcw size={16} /> Kembali ke Studio
+              </button>
             </section>
           </div>
         </div>
