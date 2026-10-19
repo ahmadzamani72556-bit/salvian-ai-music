@@ -1,5 +1,8 @@
 name: Fix full-screen AI assistant
 
+# Force a fresh main-branch push event so the patch job runs.
+# The actual UI change is made by this workflow in premium-music-studio.tsx.
+
 on:
   push:
     branches: [main]
@@ -17,7 +20,6 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
           p = Path('components/premium-music-studio.tsx')
           s = p.read_text()
           if 'fixed inset-0 z-[100] flex h-[100dvh] w-screen' in s:
