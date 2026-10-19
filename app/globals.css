@@ -17,6 +17,7 @@ body {
   background:
     radial-gradient(circle at 50% -10%, rgba(124, 58, 237, 0.18), transparent 35%),
     #07070b;
+  overflow-x: hidden;
 }
 
 * { box-sizing: border-box; }
@@ -74,9 +75,9 @@ button { cursor: pointer; }
   line-height: 1.5 !important;
 }
 
-/* Mobile Studio navigation: keep all four original actions; only size/position the bar to the phone viewport. */
+/* Mobile Studio navigation: preserve all four original actions and fit the entire bar to the phone viewport. */
 @media (max-width: 1023px) {
-  [data-premium-studio] nav[aria-label="Navigasi Studio Musik"] {
+  nav[aria-label="Navigasi Studio Musik"] {
     position: fixed !important;
     left: 0 !important;
     right: 0 !important;
@@ -84,7 +85,7 @@ button { cursor: pointer; }
     top: auto !important;
     display: grid !important;
     grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-    width: 100vw !important;
+    width: 100% !important;
     max-width: 100vw !important;
     min-width: 0 !important;
     margin: 0 !important;
@@ -95,15 +96,14 @@ button { cursor: pointer; }
     box-sizing: border-box !important;
   }
 
-  [data-premium-studio] nav[aria-label="Navigasi Studio Musik"] > button {
+  nav[aria-label="Navigasi Studio Musik"] > button {
     display: flex !important;
     flex: none !important;
-    width: auto !important;
+    width: 100% !important;
     min-width: 0 !important;
-    max-width: none !important;
+    max-width: 100% !important;
     margin: 0 !important;
-    padding-left: 2px !important;
-    padding-right: 2px !important;
+    padding: 8px 2px !important;
     white-space: normal !important;
     text-align: center !important;
     align-items: center !important;
@@ -112,7 +112,7 @@ button { cursor: pointer; }
     box-sizing: border-box !important;
   }
 
-  [data-premium-studio] nav[aria-label="Navigasi Studio Musik"] > button > span {
+  nav[aria-label="Navigasi Studio Musik"] > button > span {
     display: block !important;
     width: 100% !important;
     min-width: 0 !important;
