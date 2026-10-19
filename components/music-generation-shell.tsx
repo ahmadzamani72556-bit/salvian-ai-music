@@ -41,6 +41,7 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
   const [generating, setGenerating] = useState(false);
   const [failed, setFailed] = useState(false);
   const [savedIds, setSavedIds] = useState<Record<string, boolean>>({});
+  const [deletingIds, setDeletingIds] = useState<Record<string, boolean>>({});
 
   const loadProjects = async () => {
     const workspace = getWorkspaceId();
@@ -138,14 +139,27 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
   };
 
   const deleteProject = async (id: string) => {
+    if (deletingIds[id]) return;
     const workspace = getWorkspaceId();
-    if (!workspace) return;
+    if (!workspace) {
+      setStatus("Workspace Music belum siap. Hasil lagu tidak dihapus.");
+      return;
+    }
+
+    setDeletingIds(prev => ({ ...prev, [id]: true }));
     try {
       const res = await fetch(`/api/projects?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: { "X-Music-Workspace": workspace },
+        cache: "no-store",
       });
-      if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success !== true) {
+        throw new Error(typeof data.error === "string" ? data.error : "Gagal menghapus project.");
+      }
+
+      // Remove it immediately from the visible result list only after the
+      // server confirms the database row was actually deleted.
       setProjects(prev => prev.filter(project => project.id !== id));
       setSavedIds(prev => {
         const next = { ...prev };
@@ -154,8 +168,14 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
       });
       window.localStorage.removeItem(`salvian_music_saved_${id}`);
       setStatus("Hasil lagu berhasil dihapus dari Library Music.");
-    } catch {
-      setStatus("Hasil lagu gagal dihapus. Coba lagi.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Hasil lagu gagal dihapus. Coba lagi.");
+    } finally {
+      setDeletingIds(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     }
   };
 
@@ -220,6 +240,7 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
                   </div>
                 ) : projects.map(project => {
                   const saved = Boolean(savedIds[project.id]);
+                  const deleting = Boolean(deletingIds[project.id]);
                   const audio = audioSource(project);
                   return (
                     <article key={project.id} className="rounded-[28px] border border-white/10 bg-black/20 p-4 sm:p-5">
@@ -233,7 +254,6 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
                           <h3 className="mt-2 break-words text-xl font-black">{project.title || "Hasil Musik AI"}</h3>
                           <p className="mt-1 break-words text-sm text-zinc-500">Mode: {project.model || "Elite"} · {project.status || "succeeded"}</p>
                         </div>
-                        <button type="button" onClick={() => void deleteProject(project.id)} aria-label="Hapus hasil lagu" className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-red-400/20 px-2.5 py-2 text-xs font-bold text-red-300 hover:bg-red-500/10"><Trash2 size={18} /> <span className="hidden sm:inline">Hapus</span></button>
                       </div>
 
                       {audio ? (
@@ -250,6 +270,19 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
                           {project.task_id ? "Proses masih berjalan. Audio akan muncul setelah mesin selesai." : "Audio belum tersedia untuk karya ini."}
                         </div>
                       )}
+
+                      <div className="mt-4 flex justify-end border-t border-white/10 pt-4">
+                        <button
+                          type="button"
+                          onClick={() => void deleteProject(project.id)}
+                          disabled={deleting}
+                          aria-label="Hapus hasil lagu"
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-400/30 bg-red-500/5 px-4 py-2.5 text-sm font-black text-red-300 transition hover:bg-red-500/10 disabled:cursor-wait disabled:opacity-50"
+                        >
+                          {deleting ? <LoaderCircle size={18} className="animate-spin" /> : <Trash2 size={18} />}
+                          {deleting ? "Menghapus..." : "Hapus"}
+                        </button>
+                      </div>
 
                       {project.lyrics && <p className="mt-4 line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-zinc-500">{project.lyrics}</p>}
                     </article>
