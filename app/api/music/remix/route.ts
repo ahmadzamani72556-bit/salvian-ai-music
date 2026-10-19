@@ -69,15 +69,15 @@ async function saveTask(workspace: string, title: string, lyrics: string, prompt
 
 function buildReferencePrompt(prompt: string, language: string, gender: string, instrumental: boolean) {
   const parts = [
-    "SALVIAN AI MUSIC — REFERENCE GENERATION. The user's supplied lyrics are the source of truth for the vocal content.",
-    prompt || "Follow the musical direction supplied by the user.",
+    "SALVIAN AI MUSIC REFERENCE MODE.",
+    prompt || "Follow the user's requested music concept exactly.",
     `Language: ${language || "Indonesia"}.`,
-    gender ? `Preferred vocal gender: ${gender}.` : "",
-    instrumental ? "Instrumental only; do not sing vocals." : "",
-    "AUDIO REFERENCE: use the uploaded reference as the primary musical guide for groove, rhythm, harmonic feel, instrumentation, arrangement, section pacing, dynamics and production character.",
-    "LYRICS ADHERENCE: sing the supplied lyrics exactly as written, preserving the words, section labels and order. Do not replace, paraphrase, summarize, improvise or invent different lyrics. Fit the melody and phrasing to the supplied lyrics instead of changing the lyrics to fit the reference.",
-    "MUSIC QUALITY: keep the requested genre and concept clearly recognizable throughout the song. Preserve the reference's useful musical character while creating an original arrangement and original vocal melody. Do not fall back to generic pop or a different dominant genre.",
-    "Do not copy protected lyrics or claim to reproduce an artist identity.",
+    gender ? `Vocal gender: ${gender}.` : "",
+    instrumental ? "Instrumental only; no vocals." : "",
+    "REFERENCE MUSIC HAS PRIORITY: follow the uploaded reference's groove, rhythmic feel, tempo feel, harmonic movement, instrumentation, arrangement character, section pacing, dynamics and production character. Keep these musical characteristics clearly audible in the result.",
+    "LYRICS HAVE PRIORITY FOR WORDS: sing the supplied lyrics exactly as written and in the supplied order. Never replace, paraphrase, summarize, skip or invent lyric lines. Adapt melody and vocal phrasing to the supplied lyrics; do not rewrite the lyrics to fit the reference.",
+    "VOCAL REFERENCE: when a Voice & Vocal reference is supplied, use that vocal character together with the music reference.",
+    "Create an original song; use the reference as musical guidance, not as a request to copy the original recording.",
   ].filter(Boolean);
   return parts.join("\n").slice(0, 1024);
 }
@@ -104,18 +104,21 @@ export async function POST(request: NextRequest) {
   if (lyrics.length > 5000) return clearStage2Cookies(NextResponse.json({ success: false, error: "Lirik maksimal 5000 karakter." }, { status: 400 }));
 
   try {
-    // Stage-1 stores the complete reference in Blob. Only now, when the user
-    // presses Buat Musik, convert that stored URL to a Mureka REFERENCE file.
-    // This is intentionally NOT purpose=remix: remix makes the source song
-    // the dominant transformation path and was causing weak lyric adherence.
+    // Stage-1 stores the complete reference in Blob. At generation time the
+    // reference is converted specifically for Mureka's reference_id path.
+    // Do NOT route it through song/remix when the goal is simultaneous
+    // reference-music + supplied-lyrics + optional cloned-vocal control.
     if (!referenceId && referenceUrl) referenceId = referenceUrl;
     if (referenceId && /^https?:\/\//i.test(referenceId)) {
       const uploaded = await murekaUploadUrl(referenceId, "reference");
       referenceId = uploaded.id;
     }
 
-    const modelRaw = text(body.model) || "mureka-9";
-    const model = ["auto", "mureka-7.6", "mureka-o2", "mureka-8", "mureka-9", "mureka-9.5"].includes(modelRaw) ? modelRaw : "mureka-9";
+    // Use the highest currently supported regular Mureka model by default.
+    // It supports reference_id + vocal_id together, which is the required
+    // control combination for this Studio flow.
+    const modelRaw = text(body.model) || "mureka-9.5";
+    const model = ["auto", "mureka-7.6", "mureka-o2", "mureka-8", "mureka-9", "mureka-9.5"].includes(modelRaw) ? modelRaw : "mureka-9.5";
     if (model === "mureka-o2" && vocalId) {
       return clearStage2Cookies(NextResponse.json({ success: false, error: "Model Mureka O2 tidak mendukung Voice & Vocal. Pilih Pro atau Adroit untuk Voice & Vocal." }, { status: 400 }));
     }
@@ -180,7 +183,7 @@ export async function POST(request: NextRequest) {
       status,
       librarySaved: true,
       note: referenceId
-        ? "Audio Referensi dikonversi ke Mureka purpose=reference saat Buat Musik; lirik dan konsep dikirim melalui song/generate, bukan song/remix."
+        ? "Audio Referensi dipakai sebagai reference_id; lirik tetap dikirim sebagai sumber kata; Voice & Vocal dikirim sebagai vocal_id bila tersedia."
         : "Lagu dibuat melalui song/generate dengan lirik dan konsep pengguna.",
       provider: providerData,
     }));
