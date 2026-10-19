@@ -1,7 +1,7 @@
 "use client";
 
 import { upload } from "@vercel/blob/client";
-import { ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 
 type Props = { children: ReactNode };
 
@@ -41,8 +41,6 @@ export default function Stage2ReferenceUploadBridge({ children }: Props) {
               contentType: file.type || undefined,
               handleUploadUrl: "/api/music/reference-upload",
               clientPayload: JSON.stringify({ workspace }),
-              // Direct client upload. Vercel Blob splits large files into
-              // parts so the file never passes through the 4.5 MB Function limit.
               multipart: true,
             });
             return new Response(JSON.stringify({
