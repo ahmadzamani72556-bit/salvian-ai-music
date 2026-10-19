@@ -5,10 +5,9 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const SYSTEM_PROMPT = `Anda adalah Asisten AI resmi di SALVIAN AI MUSIC.
-Tugas utama Anda adalah membantu creator menggunakan SALVIAN AI MUSIC dengan bahasa Indonesia yang ramah, singkat, jelas, dan praktis.
-Fokus bantuan: pembuatan lagu, lirik, gaya, vokal, prompt, model, hasil lagu, Library, dan pemecahan masalah Studio.
+Anda adalah asisten percakapan serbaguna yang membantu pengguna dengan bahasa Indonesia yang jelas, ramah, dan praktis. Anda dapat menjawab pertanyaan umum, menjelaskan konsep, membantu menulis, merencanakan ide, serta membantu pembuatan lagu, lirik original, genre, vokal, prompt, model, hasil lagu, Library, dan pemecahan masalah Studio. Jangan membatasi jawaban hanya pada fitur musik; tanggapi pertanyaan pengguna sesuai konteks dan kemampuan Anda.
 SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, atau billing sendiri. Jangan meminta pengguna login, jangan membahas saldo/kredit/pembayaran, dan jangan mengarahkan pengguna ke halaman akun.
-Jangan pernah meminta password, API key, token, atau data rahasia. Jangan mengklaim dapat mengubah akun atau data pengguna secara langsung. Jangan meniru gaya atau lirik artis tertentu.`;
+Jangan pernah meminta password, API key, token, atau data rahasia. Jangan mengklaim dapat mengubah akun atau data pengguna secara langsung. Jangan meniru lirik berhak cipta atau mengklaim mengeksekusi tindakan yang tidak benar-benar dilakukan.`;
 
 function classifyOpenAIError(status: number, data: any) {
   const code = String(data?.error?.code || "").toLowerCase();
@@ -25,7 +24,7 @@ export async function POST(request: Request) {
     const message = typeof body.message === "string" ? body.message.trim() : "";
     const history = Array.isArray(body.history) ? body.history : [];
     if (!message) return NextResponse.json({ error: "Tulis pertanyaan Anda terlebih dahulu." }, { status: 400 });
-    if (message.length > 2000) return NextResponse.json({ error: "Pertanyaan terlalu panjang. Ringkas pertanyaan Anda." }, { status: 400 });
+    if (message.length > 12000) return NextResponse.json({ error: "Pesan terlalu panjang untuk satu permintaan. Bagi menjadi beberapa pesan." }, { status: 400 });
 
     const safeHistory = history
       .filter((item: unknown) => {
@@ -44,15 +43,32 @@ export async function POST(request: Request) {
 
     const client = new OpenAI({ apiKey });
     safeHistory.push({ role: "user", content: message });
-    const model = (process.env.OPENAI_ASSISTANT_MODEL || process.env.OPENAI_TEXT_MODEL || process.env.OPENAI_LYRICS_MODEL || "gpt-5.6-luna").trim();
+    const model = (process.env.OPENAI_ASSISTANT_MODEL || process.env.OPENAI_TEXT_MODEL || process.env.OPENAI_LYRICS_MODEL || "gpt-4.1-mini").trim();
 
     try {
-      const response = await client.responses.create({
-        model,
-        instructions: SYSTEM_PROMPT,
-        input: safeHistory,
-        max_output_tokens: 600,
-      });
+      let response;
+      try {
+        response = await client.responses.create({
+          model,
+          instructions: SYSTEM_PROMPT,
+          input: safeHistory,
+          max_output_tokens: 1200,
+        });
+      } catch (firstError: any) {
+        const firstStatus = Number(firstError?.status || firstError?.statusCode || 0);
+        const firstCode = String(firstError?.code || "").toLowerCase();
+        // Recover from an obsolete/unavailable configured model instead of leaving chat unusable.
+        if ((firstStatus === 404 || firstCode === "model_not_found") && model !== "gpt-4.1-mini") {
+          response = await client.responses.create({
+            model: "gpt-4.1-mini",
+            instructions: SYSTEM_PROMPT,
+            input: safeHistory,
+            max_output_tokens: 1200,
+          });
+        } else {
+          throw firstError;
+        }
+      }
       const answer = response.output_text?.trim() || "";
       if (!answer) return NextResponse.json({ error: "Asisten AI tidak menghasilkan jawaban." }, { status: 502 });
       return NextResponse.json({ answer });
