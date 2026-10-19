@@ -63,6 +63,11 @@ export default function PremiumMusicStudio() {
   useEffect(() => { const id = getWorkspaceId(); setWorkspace(id); void loadLibrary(id); }, []);
   useEffect(() => { const openAssistant = () => setChatOpen(true); window.addEventListener("salvian-open-assistant", openAssistant); return () => window.removeEventListener("salvian-open-assistant", openAssistant); }, []);
   useEffect(() => { if (active === "library") void loadLibrary(); }, [active]);
+  useEffect(() => {
+    const refreshLibrary = () => { void loadLibrary(); };
+    window.addEventListener("salvian-music-refresh-library", refreshLibrary);
+    return () => window.removeEventListener("salvian-music-refresh-library", refreshLibrary);
+  }, [workspace]);
 
   const uploadFile = async (file: File, purpose: "reference" | "voice") => {
     if (!workspace) return; if (file.size > 10 * 1024 * 1024) { setNotice("Ukuran file maksimal 10 MB."); return; }
