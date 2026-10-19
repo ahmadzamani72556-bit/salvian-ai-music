@@ -75,6 +75,7 @@ export default function PremiumMusicStudio() {
 
   const generate = async () => {
     if (!workspace) return; if (!lyrics.trim() && !instrumental) { setNotice("Masukkan lirik atau aktifkan mode instrumental."); return; }
+    if (musicEngine !== "mureka" && (referenceId || vocalId)) { setNotice("Audio Referensi dan Voice & Vocal saat ini hanya diterapkan pada mesin Mureka. Pilih Mureka atau gunakan mesin lain tanpa file referensi/vokal."); return; }
     setBusy(true); setNotice(`Mengirim karya ke ${engineCards.find(e => e.id === musicEngine)?.title || "mesin musik"}…`);
     try {
       const title = (lyrics.split("\n").find(Boolean) || `${musicEngine} Music`).replace(/^\[.*?\]\s*/, "").slice(0, 70);
