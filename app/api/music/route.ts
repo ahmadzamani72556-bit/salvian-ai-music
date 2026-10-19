@@ -195,11 +195,26 @@ async function elevenCompose(body: Record<string, unknown>) {
     store_for_inpainting: false,
   };
   if (compositionPlan) {
-    // High context adherence is safer for arbitrary user requests.
     compositionPlan.chunks = compositionPlan.chunks.map((chunk: any) => ({
       ...chunk,
       context_adherence: "high",
     }));
+    // Audio references guide sound and production; they do not guarantee exact voice cloning.
+    const conditioningIds = [body.reference_id, body.vocal_id].filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
+    if (conditioningIds.length && compositionPlan.chunks.length) {
+      compositionPlan.chunks[0] = {
+        ...compositionPlan.chunks[0],
+        conditioning_ref: { song_id: String(conditioningIds[0]), range: { start_ms: 0, end_ms: 30000 } },
+        condition_strength: "high",
+      };
+      if (conditioningIds.length > 1 && compositionPlan.chunks.length > 1) {
+        compositionPlan.chunks[1] = {
+          ...compositionPlan.chunks[1],
+          conditioning_ref: { song_id: String(conditioningIds[1]), range: { start_ms: 0, end_ms: 30000 } },
+          condition_strength: "high",
+        };
+      }
+    }
     requestBody.composition_plan = compositionPlan;
   } else {
     // Graceful fallback if the plan endpoint is temporarily unavailable.
@@ -312,31 +327,82 @@ export async function POST(request: NextRequest) {
 
     if (engine === "suno_v6") {
       const gender = String(body.gender || "").trim().toLowerCase();
-      const payload: ProviderData = {
-        model: "suno-v6",
-        lyrics: lyrics.slice(0, 3000),
-        style_tags: style || "pop, modern, emotional",
-        song_title: title,
-        instrumental: body.instrumental === true,
-      };
-      if (!body.instrumental && ["male", "female", "m", "f"].includes(gender)) payload.vocal_gender = gender;
-      if (typeof body.styleWeight === "number") payload.style_weight = Math.min(Math.max(body.styleWeight, 0), 1);
-      if (typeof body.weirdness === "number") payload.weirdness_constraint = Math.min(Math.max(body.weirdness, 0), 1);
-      if (Number.isInteger(body.variety)) payload.variety = Math.min(Math.max(Number(body.variety), 0), 4);
-
-      const generated = await sunoRequest(SUNO_GENERATE_PATH, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!generated.response.ok) return NextResponse.json({ success: false, error: `Suno API ${generated.response.status}`, data: generated.data, musicEngine: engine }, { status: generated.response.status });
+      const hasReference = typeof body.reference_id === "string" && Boolean(body.reference_id.trim());
+      const hasVoice = typeof body.vocal_id === "string" && Boolean(body.vocal_id.trim());
+      let generated: { response: Response; data: any };
+      if (hasReference && hasVoice) {
+        generated = await sunoRequest("/api/music/voice-profile/cover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "suno-v6",
+            voice_id: String(body.vocal_id),
+            song_clip_id: String(body.reference_id),
+            lyrics: lyrics.slice(0, 3000),
+            style_requirements: style || "Follow the reference music's rhythm, arrangement and production while singing the supplied original lyrics.",
+            title,
+            vocal_gender: gender,
+            audio_weight: 0.85,
+            max_mode: false,
+          }),
+        });
+      } else if (hasVoice) {
+        generated = await sunoRequest("/api/music/voice-profile/cover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "suno-v6",
+            voice_id: String(body.vocal_id),
+            lyrics: lyrics.slice(0, 3000),
+            style_requirements: style || "Create an original arrangement for the supplied lyrics using the selected voice profile.",
+            title,
+            vocal_gender: gender,
+            max_mode: false,
+          }),
+        });
+      } else if (hasReference) {
+        generated = await sunoRequest("/api/music/generate-from-source", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "suno-v6",
+            sourceClipId: String(body.reference_id),
+            prompt: lyrics.slice(0, 3000),
+            customMode: true,
+            style: style || "Preserve the reference track's broad rhythm, arrangement and production character",
+            title,
+            instrumental: body.instrumental === true,
+            vocalGender: gender,
+            audio_weight: 0.85,
+            waitAudio: false,
+          }),
+        });
+      } else {
+        const payload: ProviderData = {
+          model: "suno-v6",
+          lyrics: lyrics.slice(0, 3000),
+          style_tags: style || "pop, modern, emotional",
+          song_title: title,
+          instrumental: body.instrumental === true,
+        };
+        if (!body.instrumental && ["male", "female", "m", "f"].includes(gender)) payload.vocal_gender = gender;
+        if (typeof body.styleWeight === "number") payload.style_weight = Math.min(Math.max(body.styleWeight, 0), 1);
+        if (typeof body.weirdness === "number") payload.weirdness_constraint = Math.min(Math.max(body.weirdness, 0), 1);
+        if (Number.isInteger(body.variety)) payload.variety = Math.min(Math.max(Number(body.variety), 0), 4);
+        generated = await sunoRequest(SUNO_GENERATE_PATH, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+      if (!generated.response.ok) return NextResponse.json({ success: false, error: generated.data?.message || generated.data?.error?.message || "Suno API " + generated.response.status, data: generated.data, musicEngine: engine }, { status: generated.response.status });
       const taskId = findTaskId(generated.data);
       if (!taskId) return NextResponse.json({ success: false, error: "Suno menerima permintaan tetapi tidak mengembalikan Song ID.", data: generated.data, musicEngine: engine }, { status: 502 });
       const providerStatus = findStatus(generated.data);
       const audio = findAudio(generated.data);
       const finished = terminal(providerStatus) || Boolean(audio);
       const failed = failure(providerStatus);
-      const saved = await saveProject(userId, { title, lyrics, style, model: "suno-v6", musicEngine: engine, taskId, status: providerStatus, audioUrl: audio, providerData: { musicEngine: engine, billingProvider: billingProvider(engine), data: generated.data } });
+      const saved = await saveProject(userId, { title, lyrics, style, model: "suno-v6", musicEngine: engine, taskId, status: providerStatus, audioUrl: audio, providerData: { musicEngine: engine, billingProvider: billingProvider(engine), hasReference, hasVoice, data: generated.data } });
       if (!saved.ok) return NextResponse.json({ success: false, error: "Suno berhasil menerima permintaan tetapi Library gagal menyimpan task.", taskId, librarySaved: false }, { status: 503 });
       return NextResponse.json({ success: true, title, taskId, status: providerStatus, musicEngine: engine, billingProvider: billingProvider(engine), audio, librarySaved: true, finished, failed, data: generated.data });
     }
