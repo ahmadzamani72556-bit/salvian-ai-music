@@ -87,18 +87,56 @@ button { cursor: pointer; }
     min-height: 100% !important;
   }
 
+  [data-premium-studio] {
+    width: 100% !important;
+    max-width: 100vw !important;
+    min-width: 0 !important;
+    overflow-x: clip !important;
+  }
+
   [data-premium-studio] > .relative {
     display: block !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    min-width: 0 !important;
     min-height: 100dvh !important;
+    overflow-x: clip !important;
   }
 
   [data-premium-studio] main {
     display: block !important;
     width: 100% !important;
+    max-width: 100vw !important;
+    min-width: 0 !important;
     min-height: 100dvh !important;
     height: auto !important;
-    overflow: visible !important;
+    overflow-x: clip !important;
+    overflow-y: visible !important;
     padding-bottom: 7rem !important;
+  }
+
+  [data-premium-studio] main > div,
+  [data-premium-studio] main section,
+  [data-premium-studio] main section > div,
+  [data-premium-studio] .grid,
+  [data-premium-studio] .space-y-5 {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  [data-premium-studio] button,
+  [data-premium-studio] input,
+  [data-premium-studio] textarea,
+  [data-premium-studio] select {
+    max-width: 100% !important;
+  }
+
+  [data-premium-studio] h1,
+  [data-premium-studio] h2,
+  [data-premium-studio] h3,
+  [data-premium-studio] p,
+  [data-premium-studio] span {
+    overflow-wrap: anywhere;
   }
 
   nav[aria-label="Navigasi Studio Musik"] {
