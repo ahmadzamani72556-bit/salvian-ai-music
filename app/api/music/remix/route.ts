@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createMusicProjectServer } from "../../../lib/server-music-projects";
+import { createMusicProjectServer } from "../../../../lib/server-music-projects";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -7,9 +7,7 @@ export const maxDuration = 300;
 const MUREKA_BASE_URL = (process.env.MUREKA_BASE_URL || "https://api.mureka.ai").replace(/\/$/, "");
 const MUREKA_API_KEY = process.env.MUREKA_API_KEY || process.env.MUSIC_API_KEY;
 
-function text(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
+function text(value: unknown) { return typeof value === "string" ? value.trim() : ""; }
 
 async function readJson(response: Response) {
   const raw = await response.text().catch(() => "");
@@ -74,14 +72,7 @@ export async function POST(request: NextRequest) {
       taskId,
       status,
       audioUrl: null,
-      providerData: {
-        musicEngine: "mureka",
-        billingProvider: "mureka",
-        stage: "stage2-reference-duration-remix",
-        referenceUrl,
-        upload: uploadData,
-        remix: remixData,
-      },
+      providerData: { musicEngine: "mureka", billingProvider: "mureka", stage: "stage2-reference-duration-remix", referenceUrl, upload: uploadData, remix: remixData },
     });
     if (!saved) return NextResponse.json({ success: false, error: "Task Mureka diterima tetapi gagal disimpan ke Library.", taskId, librarySaved: false }, { status: 503 });
 
