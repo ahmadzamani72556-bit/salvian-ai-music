@@ -22,7 +22,6 @@ const ENGINE_ALIASES = new Map([
 ]);
 
 type MusicEngine = "mureka" | "eleven_music_v2_5" | "suno_v6";
-
 type ProviderData = Record<string, unknown>;
 
 function workspace(request: NextRequest) {
@@ -135,26 +134,55 @@ async function mureka(path: string, init: RequestInit = {}) {
   return { response, data: await readJson(response) as any };
 }
 
-async function elevenCompose(body: Record<string, unknown>) {
-  if (!ELEVEN_API_KEY) throw new Error("ELEVEN_API_KEY / ELEVENLABS_API_KEY belum tersedia di Vercel SALVIAN AI MUSIC.");
-  const lyrics = String(body.lyrics || "").trim();
-  const style = String(body.style || "").trim();
+function buildElevenPrompt(body: Record<string, unknown>) {
+  const lyrics = String(body.lyrics || "").trim().slice(0, 3500);
+  const rawStyle = String(body.style || "").trim().slice(0, 1100);
   const language = String(body.language || "Indonesia").trim();
   const tempo = Number(body.tempo || 100);
-  const gender = String(body.gender || "female");
-  const prompt = [
-    `Create an original ${language} song.`,
-    style ? `Style: ${style}.` : "",
-    `Tempo: ${tempo} BPM.`,
-    `Vocal: ${gender}.`,
-    body.instrumental ? "Instrumental only; do not use vocals." : "",
-    lyrics ? `Lyrics:\n${lyrics.slice(0, 3500)}` : "",
-  ].filter(Boolean).join("\n\n");
+  const gender = String(body.gender || "female").trim();
+  const lower = rawStyle.toLowerCase();
+  const styles: string[] = [];
+  const negatives: string[] = [];
+
+  if (lower.includes("dangdut")) {
+    styles.push("modern Indonesian dangdut", "prominent kendang dangdut rhythm", "syncopated percussion", "electric rhythm guitar", "deep melodic bass", "bright synth accents", "danceable groove");
+    if (lower.includes("koplo")) styles.push("dangdut koplo energy", "fast expressive kendang fills");
+    if (lower.includes("remix") || lower.includes("dj")) styles.push("modern remix production", "punchy kick and tight low end", "DJ-style transitions", "energetic drop into the chorus");
+    negatives.push("generic pop", "slow ballad", "rock as the dominant genre", "country", "orchestral soundtrack");
+  }
+  if (lower.includes("rock")) styles.push("driving rock drums", "electric guitar rhythm", "strong live-band energy");
+  if (lower.includes("ballad")) styles.push("emotional ballad phrasing", "warm piano or guitar", "dynamic chorus lift");
+  if (lower.includes("sholawat")) styles.push("devotional Indonesian vocal delivery", "warm frame-drum percussion", "respectful spiritual atmosphere");
+  if (lower.includes("slow")) styles.push("controlled slow groove", "spacious arrangement");
+  if (lower.includes("energetic") || lower.includes("ceria")) styles.push("high-energy performance", "clear rhythmic accents");
+
+  if (!styles.length) styles.push("clear genre identity", "coherent modern production", "distinct rhythm section", "strong melodic hook");
+
+  const arrangement = body.instrumental
+    ? "Arrangement: short intro, establish the requested groove immediately, develop the main theme, add a strong middle variation, then a satisfying final section and clean outro."
+    : "Arrangement: short intro, Verse 1, Pre-Chorus if appropriate, big Chorus, Verse 2, Chorus, Bridge or instrumental break, final Chorus, clean Outro. Keep the requested genre dominant from beginning to end.";
+
+  return [
+    `Create an original ${language} song using Music v2.5.`,
+    `PRIMARY GENRE: ${rawStyle || "modern contemporary song"}. Treat the user's requested genre/style as the highest-priority musical instruction.`,
+    `MUSICAL IDENTITY: ${styles.join("; ")}.`,
+    `TEMPO: ${tempo} BPM. VOCAL: ${gender} vocal, natural and expressive delivery.`,
+    arrangement,
+    "ADHERENCE RULE: Do not replace, dilute, or reinterpret the requested genre as generic pop, ballad, rock, EDM, or another genre unless the user explicitly asks for that blend. The rhythm, instrumentation, groove, vocal delivery, and production must consistently communicate the requested style.",
+    negatives.length ? `AVOID: ${negatives.join("; ")}.` : "",
+    body.instrumental ? "INSTRUMENTAL ONLY. No sung vocals or lyrics." : "Use the supplied lyrics exactly as the lyrical source; preserve their section labels and wording rather than inventing a different song.",
+    lyrics ? `LYRICS:\n${lyrics}` : "",
+  ].filter(Boolean).join("\n\n").slice(0, 4100);
+}
+
+async function elevenCompose(body: Record<string, unknown>) {
+  if (!ELEVEN_API_KEY) throw new Error("ELEVEN_API_KEY / ELEVENLABS_API_KEY belum tersedia di Vercel SALVIAN AI MUSIC.");
+  const prompt = buildElevenPrompt(body);
   const response = await fetch(`${ELEVEN_BASE_URL}/v1/music?output_format=mp3_48000_192`, {
     method: "POST",
     headers: { "xi-api-key": ELEVEN_API_KEY, "Content-Type": "application/json", Accept: "audio/mpeg" },
     body: JSON.stringify({
-      prompt: prompt.slice(0, 4100),
+      prompt,
       model_id: "music_v2_5",
       music_length_ms: Math.min(Math.max(Number(body.durationMs || 180000), 3000), 600000),
       force_instrumental: body.instrumental === true,
@@ -173,7 +201,7 @@ async function elevenCompose(body: Record<string, unknown>) {
     status: "completed",
     audioBase64: audio,
     contentType: response.headers.get("content-type")?.split(";")[0] || "audio/mpeg",
-    data: { song_id: songId, model: "music_v2_5" },
+    data: { song_id: songId, model: "music_v2_5", prompt },
   };
 }
 
