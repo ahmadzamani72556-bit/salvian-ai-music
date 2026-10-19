@@ -3,123 +3,51 @@
 import { type ReactNode, useEffect } from "react";
 
 type Props = { children: ReactNode };
-type Draft = {
-  prompt?: string;
-  lyrics?: string;
-  gender?: string;
-  instrumental?: boolean;
-  tempo?: number;
-  language?: string;
-  musicEngine?: string;
-  model?: string;
-  referenceId?: string;
-  referenceName?: string;
-  referenceEngine?: string;
-};
-
 const DRAFT_KEY = "salvian_music_stage2_draft";
 
+type Draft = {
+  prompt?: string; lyrics?: string; gender?: string; instrumental?: boolean; tempo?: number; language?: string;
+  musicEngine?: string; model?: string; referenceId?: string; referenceName?: string; referenceEngine?: string;
+  vocalId?: string; vocalName?: string; vocalEngine?: string;
+};
+
+function readDraft(): Draft {
+  try { return JSON.parse(window.localStorage.getItem(DRAFT_KEY) || "null") || {}; } catch { return {}; }
+}
+function writeDraft(patch: Draft) {
+  try { window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...readDraft(), ...patch })); } catch {}
+}
 function urlOf(input: RequestInfo | URL) {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
   return input.url;
 }
 
-function readDraft(): Draft {
-  try {
-    const raw = window.localStorage.getItem(DRAFT_KEY);
-    return raw ? JSON.parse(raw) as Draft : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeDraft(patch: Draft) {
-  try {
-    const next = { ...readDraft(), ...patch };
-    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(next));
-  } catch {
-    // Local persistence is best-effort; never block the music studio.
-  }
-}
-
 /**
- * Stage-2 adapter only. It leaves the proven Studio and Stage-1 /api/music
- * flow untouched. Reference audio goes browser -> Blob, while the completed
- * Mureka reference request goes through the dedicated Remix route.
- *
- * This adapter also keeps the Stage-2 draft locally so a normal browser
- * refresh does not erase the reference, lyrics, concept, or controls.
+ * Stage-2 adapter. It must NEVER create another page or navigation step.
+ * File selection is the only browser picker step; after selection the user
+ * remains on the same Studio screen and can continue with concept + lyrics.
+ * Only the large Mureka reference upload and Mureka reference-duration remix
+ * are intercepted here. Stage 1 remains untouched.
  */
 export default function Stage2ReferenceFlow({ children }: Props) {
   useEffect(() => {
+    // The Studio owns the page scroll on mobile. Do not trap touch scrolling
+    // in an upload/result container after the file picker closes.
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtmlOverflow = html.style.overflowY;
+    const previousBodyOverflow = body.style.overflowY;
+    html.style.overflowY = "auto";
+    body.style.overflowY = "auto";
+
     const nativeFetch = window.fetch.bind(window);
-
-    // Restore controlled Studio fields after React mounts. We deliberately
-    // use real DOM events so the existing controlled inputs update their
-    // React state instead of creating a second state system.
-    const draft = readDraft();
-    const restore = window.setTimeout(() => {
-      const textareas = Array.from(document.querySelectorAll<HTMLTextAreaElement>("[data-premium-studio] textarea"));
-      if (draft.prompt !== undefined && textareas[0]) {
-        textareas[0].value = draft.prompt;
-        textareas[0].dispatchEvent(new Event("input", { bubbles: true }));
-      }
-      if (draft.lyrics !== undefined && textareas[1]) {
-        textareas[1].value = draft.lyrics;
-        textareas[1].dispatchEvent(new Event("input", { bubbles: true }));
-      }
-      const selects = Array.from(document.querySelectorAll<HTMLSelectElement>("[data-premium-studio] select"));
-      if (draft.language && selects[0]) {
-        selects[0].value = draft.language;
-        selects[0].dispatchEvent(new Event("change", { bubbles: true }));
-      }
-      if (draft.gender && selects[1]) {
-        selects[1].value = draft.gender;
-        selects[1].dispatchEvent(new Event("change", { bubbles: true }));
-      }
-      const range = document.querySelector<HTMLInputElement>("[data-premium-studio] input[type=range]");
-      if (typeof draft.tempo === "number" && range) {
-        range.value = String(draft.tempo);
-        range.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-      const checkbox = document.querySelector<HTMLInputElement>("[data-premium-studio] input[type=checkbox]");
-      if (typeof draft.instrumental === "boolean" && checkbox) {
-        checkbox.checked = draft.instrumental;
-        checkbox.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-      if (draft.referenceName) {
-        window.dispatchEvent(new CustomEvent("salvian-stage2-reference-restored", { detail: draft }));
-      }
-    }, 0);
-
-    // Save user typing/control changes immediately so a refresh preserves the
-    // work in progress. The file itself cannot be persisted in localStorage;
-    // its Blob URL/id is persisted after the upload succeeds.
-    const onInput = (event: Event) => {
-      const target = event.target as HTMLInputElement | HTMLTextAreaElement | null;
-      if (!target) return;
-      const textareas = Array.from(document.querySelectorAll<HTMLTextAreaElement>("[data-premium-studio] textarea"));
-      if (target === textareas[0]) writeDraft({ prompt: target.value });
-      if (target === textareas[1]) writeDraft({ lyrics: target.value });
-      if (target instanceof HTMLInputElement && target.type === "range") writeDraft({ tempo: Number(target.value) });
-    };
-    const onChange = (event: Event) => {
-      const target = event.target as HTMLInputElement | HTMLSelectElement | null;
-      if (!target) return;
-      if (target instanceof HTMLSelectElement) {
-        const selects = Array.from(document.querySelectorAll<HTMLSelectElement>("[data-premium-studio] select"));
-        if (target === selects[0]) writeDraft({ language: target.value });
-        if (target === selects[1]) writeDraft({ gender: target.value });
-      }
-      if (target instanceof HTMLInputElement && target.type === "checkbox") writeDraft({ instrumental: target.checked });
-    };
-    document.addEventListener("input", onInput, true);
-    document.addEventListener("change", onChange, true);
 
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = urlOf(input);
 
+      // Large Mureka reference: browser -> signed Blob PUT. The original
+      // Studio still calls /api/music/upload; we intercept only this one case.
       if (url.endsWith("/api/music/upload") && init?.body instanceof FormData) {
         const form = init.body;
         const purpose = String(form.get("purpose") || "").toLowerCase();
@@ -148,6 +76,7 @@ export default function Stage2ReferenceFlow({ children }: Props) {
             if (!put.ok) throw new Error("Upload Audio Referensi ke Blob gagal.");
 
             writeDraft({ referenceId: String(signData.url), referenceName: file.name, referenceEngine: "mureka" });
+            window.setTimeout(() => window.scrollTo({ top: 0, behavior: "auto" }), 0);
             return new Response(JSON.stringify({ success: true, id: signData.url, url: signData.url, purpose: "reference", engine: "mureka", largeReferenceUpload: true }), {
               status: 200,
               headers: { "Content-Type": "application/json" },
@@ -161,6 +90,8 @@ export default function Stage2ReferenceFlow({ children }: Props) {
         }
       }
 
+      // When Create Music is pressed with a Blob reference URL, use the
+      // dedicated Mureka Remix path. Other engines and Stage 1 stay unchanged.
       if (url.endsWith("/api/music") && typeof init?.body === "string") {
         try {
           const body = JSON.parse(init.body) as Record<string, unknown>;
@@ -194,7 +125,7 @@ export default function Stage2ReferenceFlow({ children }: Props) {
             });
           }
         } catch {
-          // Preserve the original request when it is not the Stage-2 path.
+          // Preserve the original request for Stage 1 and non-JSON requests.
         }
       }
 
@@ -202,9 +133,8 @@ export default function Stage2ReferenceFlow({ children }: Props) {
     };
 
     return () => {
-      window.clearTimeout(restore);
-      document.removeEventListener("input", onInput, true);
-      document.removeEventListener("change", onChange, true);
+      html.style.overflowY = previousHtmlOverflow;
+      body.style.overflowY = previousBodyOverflow;
       window.fetch = nativeFetch;
     };
   }, []);
