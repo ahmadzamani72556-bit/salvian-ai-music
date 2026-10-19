@@ -17,19 +17,9 @@ async function json(response: Response) {
 
 function pickId(data: any) {
   const candidates = [
-    data?.id,
-    data?.file_id,
-    data?.fileId,
-    data?.upload_id,
-    data?.uploadId,
-    data?.data?.id,
-    data?.data?.file_id,
-    data?.data?.fileId,
-    data?.data?.upload_id,
-    data?.data?.uploadId,
-    data?.file?.id,
-    data?.file?.file_id,
-    data?.file?.upload_id,
+    data?.id, data?.file_id, data?.fileId, data?.upload_id, data?.uploadId,
+    data?.data?.id, data?.data?.file_id, data?.data?.fileId, data?.data?.upload_id, data?.data?.uploadId,
+    data?.file?.id, data?.file?.file_id, data?.file?.upload_id,
   ];
   const id = candidates.find((value) => value !== undefined && value !== null && String(value).trim());
   return id ? String(id) : "";
@@ -47,7 +37,7 @@ async function murekaUpload(file: File, purpose: "reference" | "remix") {
     cache: "no-store",
   });
   const data = await json(response);
-  if (!response.ok) throw new Error(data?.error?.message || data?.message || `Mureka upload ${purpose} ${response.status}`);
+  if (!response.ok) throw new Error(`Mureka upload ${purpose} gagal (${response.status}): ${data?.error?.message || data?.message || "respons tidak menjelaskan penyebab"}`);
   const id = pickId(data);
   if (!id) throw new Error(`Mureka tidak mengembalikan ID untuk upload ${purpose}.`);
   return { id, data };
@@ -58,12 +48,7 @@ async function murekaVocal(file: File) {
   const form = new FormData();
   form.append("file", file, file.name);
   form.append("description", "Karakter vokal creator SALVIAN AI MUSIC");
-  const response = await fetch(`${MUREKA_BASE_URL}/v1/song/vocal-clone`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${MUREKA_API_KEY}`, Accept: "application/json" },
-    body: form,
-    cache: "no-store",
-  });
+  const response = await fetch(`${MUREKA_BASE_URL}/v1/song/vocal-clone`, { method: "POST", headers: { Authorization: `Bearer ${MUREKA_API_KEY}`, Accept: "application/json" }, body: form, cache: "no-store" });
   const data = await json(response);
   if (!response.ok) throw new Error(data?.error?.message || data?.message || `Mureka vocal clone ${response.status}`);
   const id = data?.vocal_id || data?.id || data?.data?.vocal_id || data?.data?.id;
@@ -73,15 +58,8 @@ async function murekaVocal(file: File) {
 
 async function elevenUpload(file: File) {
   if (!ELEVEN_API_KEY) throw new Error("ELEVEN_API_KEY / ELEVENLABS_API_KEY belum tersedia di Vercel.");
-  const form = new FormData();
-  form.append("file", file);
-  form.append("extract_composition_plan", "music_v2_5");
-  const response = await fetch(`${ELEVEN_BASE_URL}/v1/music/upload`, {
-    method: "POST",
-    headers: { "xi-api-key": ELEVEN_API_KEY, Accept: "application/json" },
-    body: form,
-    cache: "no-store",
-  });
+  const form = new FormData(); form.append("file", file); form.append("extract_composition_plan", "music_v2_5");
+  const response = await fetch(`${ELEVEN_BASE_URL}/v1/music/upload`, { method: "POST", headers: { "xi-api-key": ELEVEN_API_KEY, Accept: "application/json" }, body: form, cache: "no-store" });
   const data = await json(response);
   if (!response.ok) throw new Error(data?.detail?.message || data?.message || `Eleven Music upload ${response.status}`);
   const id = data?.song_id || data?.id;
@@ -91,23 +69,10 @@ async function elevenUpload(file: File) {
 
 async function sunoUpload(file: File, purpose: "reference" | "voice") {
   if (!SUNO_API_KEY) throw new Error("SUNO_API_KEY belum tersedia di Vercel.");
-  const form = new FormData();
-  form.append("file", file);
-  form.append("file_name", file.name);
-  form.append("model", "suno-v6");
-  let path = "/api/music/upload-source";
-  form.append("upload_type", "file_upload");
-  if (purpose === "voice") {
-    path = "/api/music/voice-profile/create";
-    form.append("title", file.name.replace(/\.[^.]+$/, "").slice(0, 80));
-    form.append("source_kind", "upload");
-  }
-  const response = await fetch(`${SUNO_API_BASE_URL}${path}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${SUNO_API_KEY}`, Accept: "application/json" },
-    body: form,
-    cache: "no-store",
-  });
+  const form = new FormData(); form.append("file", file); form.append("file_name", file.name); form.append("model", "suno-v6");
+  let path = "/api/music/upload-source"; form.append("upload_type", "file_upload");
+  if (purpose === "voice") { path = "/api/music/voice-profile/create"; form.append("title", file.name.replace(/\.[^.]+$/, "").slice(0, 80)); form.append("source_kind", "upload"); }
+  const response = await fetch(`${SUNO_API_BASE_URL}${path}`, { method: "POST", headers: { Authorization: `Bearer ${SUNO_API_KEY}`, Accept: "application/json" }, body: form, cache: "no-store" });
   const data = await json(response);
   if (!response.ok || data?.success === false || (data?.code && data.code !== 200)) throw new Error(data?.message || data?.error?.message || `Suno upload ${response.status}`);
   const payload = data?.data || data;
@@ -117,13 +82,7 @@ async function sunoUpload(file: File, purpose: "reference" | "voice") {
 }
 
 function stage2CookieOptions(path = "/api/music") {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
-    path,
-    maxAge: 60 * 60,
-  };
+  return { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax" as const, path, maxAge: 60 * 60 };
 }
 
 export async function POST(request: NextRequest) {
@@ -136,9 +95,7 @@ export async function POST(request: NextRequest) {
     if (!(file instanceof File)) return NextResponse.json({ success: false, error: "File audio belum dipilih." }, { status: 400 });
     if (file.size > 10 * 1024 * 1024) return NextResponse.json({ success: false, error: "Ukuran file maksimal 10 MB." }, { status: 413 });
     const name = file.name.toLowerCase();
-    if (!(name.endsWith(".mp3") || name.endsWith(".m4a") || (engine === "suno_v6" && (name.endsWith(".wav") || name.endsWith(".aac") || name.endsWith(".flac") || name.endsWith(".ogg"))))) {
-      return NextResponse.json({ success: false, error: "Format audio yang didukung: MP3 atau M4A (Suno juga menerima WAV, AAC, FLAC, dan OGG)." }, { status: 400 });
-    }
+    if (!(name.endsWith(".mp3") || name.endsWith(".m4a") || (engine === "suno_v6" && (name.endsWith(".wav") || name.endsWith(".aac") || name.endsWith(".flac") || name.endsWith(".ogg"))))) return NextResponse.json({ success: false, error: "Format audio yang didukung: MP3 atau M4A (Suno juga menerima WAV, AAC, FLAC, dan OGG)." }, { status: 400 });
 
     let result: { id: string; data: unknown };
     let stage2RemixId = "";
@@ -147,17 +104,18 @@ export async function POST(request: NextRequest) {
       if (purpose === "voice") {
         result = await murekaVocal(file);
       } else if (purpose === "remix") {
-        // Explicit Stage-2 fallback: upload the original full file with the
-        // Mureka remix purpose and return that upload ID directly.
         result = await murekaUpload(file, "remix");
         stage2RemixId = result.id;
       } else {
-        // Keep the existing 30-second reference upload for Stage 1.
-        result = await murekaUpload(file, "reference");
-        // Also upload the same original file with purpose=remix. This is the
-        // authoritative full-duration source for Stage 2.
-        const remix = await murekaUpload(file, "remix");
-        stage2RemixId = remix.id;
+        // These are independent Mureka uploads. Run them concurrently so a
+        // slow mobile connection does not spend the entire 60s route budget
+        // uploading the same file twice sequentially.
+        const [referenceResult, remixResult] = await Promise.all([
+          murekaUpload(file, "reference"),
+          murekaUpload(file, "remix"),
+        ]);
+        result = referenceResult;
+        stage2RemixId = remixResult.id;
       }
     } else if (engine === "eleven_music_v2_5") {
       result = await elevenUpload(file);
@@ -170,27 +128,12 @@ export async function POST(request: NextRequest) {
 
     if (!result.id || typeof result.id !== "string") throw new Error("Mesin musik tidak mengembalikan ID audio yang dapat digunakan.");
 
-    const response = NextResponse.json({
-      success: true,
-      id: result.id,
-      ...(purpose === "voice" ? { vocal_id: result.id } : {}),
-      purpose,
-      engine,
-      stage2Reference: Boolean(stage2RemixId),
-      stage2Ready: Boolean(stage2RemixId),
-      remix_upload_id: stage2RemixId || (purpose === "remix" ? result.id : null),
-      data: result.data,
-    });
-
+    const response = NextResponse.json({ success: true, id: result.id, ...(purpose === "voice" ? { vocal_id: result.id } : {}), purpose, engine, stage2Reference: Boolean(stage2RemixId), stage2Ready: Boolean(stage2RemixId), remix_upload_id: stage2RemixId || (purpose === "remix" ? result.id : null), data: result.data });
     if (stage2RemixId && engine === "mureka" && (purpose === "reference" || purpose === "remix")) {
-      // Set both the API-path cookie and a root-scoped backup. The latter makes
-      // the handoff survive direct /api/music/remix calls as well as the
-      // middleware bridge, while remaining HttpOnly.
       response.cookies.set("salvian_stage2_pending", "1", stage2CookieOptions("/api/music"));
       response.cookies.set("salvian_stage2_remix_id", stage2RemixId, stage2CookieOptions("/api/music"));
       response.cookies.set("salvian_stage2_remix_id_root", stage2RemixId, stage2CookieOptions("/"));
     }
-
     return response;
   } catch (error) {
     console.error("SALVIAN MUSIC upload error", error);
