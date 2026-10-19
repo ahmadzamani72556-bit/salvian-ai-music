@@ -99,6 +99,7 @@ export async function POST(request: NextRequest) {
 
     let result: { id: string; data: unknown };
     let stage2RemixId = "";
+    let referenceId = "";
 
     if (engine === "mureka") {
       if (purpose === "voice") {
@@ -107,28 +108,39 @@ export async function POST(request: NextRequest) {
         result = await murekaUpload(file, "remix");
         stage2RemixId = result.id;
       } else {
-        // These are independent Mureka uploads. Run them concurrently so a
-        // slow mobile connection does not spend the entire 60s route budget
-        // uploading the same file twice sequentially.
-        const [referenceResult, remixResult] = await Promise.all([
-          murekaUpload(file, "reference"),
-          murekaUpload(file, "remix"),
-        ]);
-        result = referenceResult;
-        stage2RemixId = remixResult.id;
+        // Audio Referensi in this Studio is the full-duration source for Remix.
+        // Mureka's `reference` purpose is limited to a 30-second reference,
+        // while `remix` accepts the full source up to 350 seconds. Uploading
+        // the same full song as `reference` first caused the whole request to
+        // fail even though the Remix upload was valid. Use the Remix upload
+        // directly for the full-duration Stage-2 workflow.
+        result = await murekaUpload(file, "remix");
+        stage2RemixId = result.id;
+        referenceId = result.id;
       }
     } else if (engine === "eleven_music_v2_5") {
       result = await elevenUpload(file);
+      referenceId = result.id;
     } else if (engine === "suno_v6") {
       if (purpose === "remix") return NextResponse.json({ success: false, error: "Mode Remix penuh saat ini hanya tersedia untuk Mureka." }, { status: 400 });
       result = await sunoUpload(file, purpose === "voice" ? "voice" : "reference");
+      referenceId = result.id;
     } else {
       return NextResponse.json({ success: false, error: "Mesin musik tidak dikenal." }, { status: 400 });
     }
 
     if (!result.id || typeof result.id !== "string") throw new Error("Mesin musik tidak mengembalikan ID audio yang dapat digunakan.");
 
-    const response = NextResponse.json({ success: true, id: result.id, ...(purpose === "voice" ? { vocal_id: result.id } : {}), purpose, engine, stage2Reference: Boolean(stage2RemixId), stage2Ready: Boolean(stage2RemixId), remix_upload_id: stage2RemixId || (purpose === "remix" ? result.id : null), data: result.data });
+    const response = NextResponse.json({
+      success: true,
+      id: referenceId || result.id,
+      purpose,
+      engine,
+      stage2Reference: Boolean(stage2RemixId),
+      stage2Ready: Boolean(stage2RemixId),
+      remix_upload_id: stage2RemixId || (purpose === "remix" ? result.id : null),
+      data: result.data,
+    });
     if (stage2RemixId && engine === "mureka" && (purpose === "reference" || purpose === "remix")) {
       response.cookies.set("salvian_stage2_pending", "1", stage2CookieOptions("/api/music"));
       response.cookies.set("salvian_stage2_remix_id", stage2RemixId, stage2CookieOptions("/api/music"));
