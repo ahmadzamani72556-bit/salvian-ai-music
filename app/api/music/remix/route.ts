@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { issueSignedToken, presignUrl } from "@vercel/blob";
 import { createMusicProjectServer } from "../../../../lib/server-music-projects";
 
 export const runtime = "nodejs";
@@ -13,6 +14,28 @@ async function readJson(response: Response) {
   const raw = await response.text().catch(() => "");
   if (!raw) return {} as Record<string, unknown>;
   try { return JSON.parse(raw) as Record<string, unknown>; } catch { return { raw }; }
+}
+
+async function makeMurekaReadableUrl(referenceUrl: string) {
+  const parsed = new URL(referenceUrl);
+  const isVercelBlob = /\.blob\.vercel-storage\.com$/i.test(parsed.hostname);
+  if (!isVercelBlob) return referenceUrl;
+
+  // Audio references are stored in the connected private Blob store. Mureka cannot
+  // authenticate to a private Blob URL, so give it a short-lived, GET-only URL.
+  const pathname = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
+  if (!pathname) throw new Error("Path Audio Referensi Blob tidak valid.");
+
+  const signedToken = await issueSignedToken({
+    pathname,
+    operations: ["get"],
+  });
+  const { presignedUrl } = await presignUrl(signedToken, {
+    pathname,
+    operation: "get",
+    validUntil: Date.now() + 15 * 60 * 1000,
+  });
+  return presignedUrl;
 }
 
 export async function POST(request: NextRequest) {
@@ -35,9 +58,11 @@ export async function POST(request: NextRequest) {
   const remixPrompt = (prompt || "Pertahankan karakter musik dari Audio Referensi: groove, ritme, harmoni, instrumen, aransemen, dinamika, pacing, nuansa produksi, dan struktur/durasi sumber sedekat mungkin dengan kemampuan Remix. Gunakan lirik baru secara independen dan buat hasil musik original.").slice(0, 1024);
 
   try {
+    const murekaReadableUrl = await makeMurekaReadableUrl(referenceUrl);
+
     const uploadForm = new FormData();
     uploadForm.append("purpose", "remix");
-    uploadForm.append("url", referenceUrl);
+    uploadForm.append("url", murekaReadableUrl);
 
     const uploadResponse = await fetch(`${MUREKA_BASE_URL}/v1/files/upload`, {
       method: "POST",
@@ -46,7 +71,15 @@ export async function POST(request: NextRequest) {
       cache: "no-store",
     });
     const uploadData = await readJson(uploadResponse);
-    if (!uploadResponse.ok) return NextResponse.json({ success: false, stage: "upload", error: "Mureka menolak Audio Referensi Remix.", provider: uploadData }, { status: uploadResponse.status });
+    if (!uploadResponse.ok) {
+      const providerReason = text(uploadData.message || uploadData.error || uploadData.failed_reason || uploadData.detail);
+      return NextResponse.json({
+        success: false,
+        stage: "upload",
+        error: providerReason ? `Mureka menolak Audio Referensi Remix: ${providerReason}` : "Mureka menolak Audio Referensi Remix.",
+        provider: uploadData,
+      }, { status: uploadResponse.status });
+    }
 
     const uploadId = text(uploadData.id || uploadData.upload_id);
     if (!uploadId) return NextResponse.json({ success: false, stage: "upload", error: "Mureka tidak mengembalikan upload_id.", provider: uploadData }, { status: 502 });
@@ -58,7 +91,15 @@ export async function POST(request: NextRequest) {
       cache: "no-store",
     });
     const remixData = await readJson(remixResponse);
-    if (!remixResponse.ok) return NextResponse.json({ success: false, stage: "remix", error: "Mureka gagal memulai proses Remix.", provider: remixData }, { status: remixResponse.status });
+    if (!remixResponse.ok) {
+      const providerReason = text(remixData.message || remixData.error || remixData.failed_reason || remixData.detail);
+      return NextResponse.json({
+        success: false,
+        stage: "remix",
+        error: providerReason ? `Mureka gagal memulai proses Remix: ${providerReason}` : "Mureka gagal memulai proses Remix.",
+        provider: remixData,
+      }, { status: remixResponse.status });
+    }
 
     const taskId = text(remixData.id || remixData.task_id);
     if (!taskId) return NextResponse.json({ success: false, stage: "remix", error: "Mureka tidak mengembalikan Task ID.", provider: remixData }, { status: 502 });
