@@ -75,11 +75,30 @@ button { cursor: pointer; }
   line-height: 1.5 !important;
 }
 
-/* Mobile Studio navigation: preserve all four original actions and fit the actual inner row to the phone viewport. */
+/* Mobile Studio: the document itself must own vertical scrolling. The Studio
+   main element previously acted as a nested flex scroller, which can trap
+   touch scrolling on phones after an upload. */
 @media (max-width: 1023px) {
   html,
   body {
     overflow-x: hidden !important;
+    overflow-y: auto !important;
+    height: auto !important;
+    min-height: 100% !important;
+  }
+
+  [data-premium-studio] > .relative {
+    display: block !important;
+    min-height: 100dvh !important;
+  }
+
+  [data-premium-studio] main {
+    display: block !important;
+    width: 100% !important;
+    min-height: 100dvh !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding-bottom: 7rem !important;
   }
 
   nav[aria-label="Navigasi Studio Musik"] {
@@ -95,7 +114,6 @@ button { cursor: pointer; }
     padding: 0 !important;
     overflow: hidden !important;
     transform: none !important;
-    box-sizing: border-box !important;
   }
 
   nav[aria-label="Navigasi Studio Musik"] > div {
