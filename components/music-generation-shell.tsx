@@ -11,6 +11,7 @@ type Project = {
   model?: string;
   status?: string;
   audio?: string | null;
+  audio_url?: string | null;
   task_id?: string | null;
   created_at?: string;
 };
@@ -26,6 +27,10 @@ type Phase = "studio" | "results";
 function getWorkspaceId() {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem("salvian_music_workspace") || "";
+}
+
+function audioSource(project: Project) {
+  return project.audio || project.audio_url || null;
 }
 
 export default function MusicGenerationShell({ children }: { children: ReactNode }) {
@@ -44,7 +49,10 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
       const res = await fetch("/api/projects", { headers: { "X-Music-Workspace": workspace }, cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !Array.isArray(data.projects)) return;
-      const next = data.projects as Project[];
+      const next = (data.projects as Project[]).map(project => ({
+        ...project,
+        audio: audioSource(project),
+      }));
       setProjects(next);
       const saved: Record<string, boolean> = {};
       next.forEach(project => {
@@ -60,7 +68,7 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
     const onResults = (event: Event) => {
       const detail = (event as CustomEvent<{ projects?: Project[] }>).detail;
       if (!Array.isArray(detail?.projects)) return;
-      setProjects(detail.projects);
+      setProjects(detail.projects.map(project => ({ ...project, audio: audioSource(project) })));
     };
 
     const onStatus = (event: Event) => {
@@ -85,6 +93,7 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
 
     const onShowResults = () => {
       setPhase("results");
+      setProgress(value => Math.max(value, 8));
       void loadProjects();
     };
     const onShowStudio = () => setPhase("studio");
@@ -109,7 +118,6 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
     const started = Date.now();
     const timer = window.setInterval(() => {
       const elapsed = (Date.now() - started) / 1000;
-      // Visual progress only; the provider status remains authoritative.
       setProgress(value => Math.max(value, Math.min(94, Math.round(12 + elapsed * 2.8))));
     }, 1000);
     return () => window.clearInterval(timer);
@@ -212,6 +220,7 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
                   </div>
                 ) : projects.map(project => {
                   const saved = Boolean(savedIds[project.id]);
+                  const audio = audioSource(project);
                   return (
                     <article key={project.id} className="rounded-[28px] border border-white/10 bg-black/20 p-4 sm:p-5">
                       <div className="flex items-start gap-3">
@@ -224,15 +233,15 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
                           <h3 className="mt-2 break-words text-xl font-black">{project.title || "Hasil Musik AI"}</h3>
                           <p className="mt-1 break-words text-sm text-zinc-500">Mode: {project.model || "Elite"} · {project.status || "succeeded"}</p>
                         </div>
-                        <button type="button" onClick={() => void deleteProject(project.id)} aria-label="Hapus hasil lagu" className="rounded-xl p-2 text-zinc-500 hover:bg-red-500/10 hover:text-red-300"><Trash2 size={21} /></button>
+                        <button type="button" onClick={() => void deleteProject(project.id)} aria-label="Hapus hasil lagu" className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-red-400/20 px-2.5 py-2 text-xs font-bold text-red-300 hover:bg-red-500/10"><Trash2 size={18} /> <span className="hidden sm:inline">Hapus</span></button>
                       </div>
 
-                      {project.audio ? (
+                      {audio ? (
                         <>
-                          <audio controls preload="metadata" src={project.audio} className="mt-5 w-full" />
+                          <audio controls preload="metadata" src={audio} className="mt-5 w-full" />
                           <div className="mt-4 flex flex-wrap gap-2">
-                            <button type="button" onClick={() => { const audio = new Audio(project.audio!); void audio.play(); }} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-black hover:bg-violet-500"><Play size={17} /> Putar Lagu</button>
-                            <a href={project.audio} download className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm font-black hover:bg-white/5"><Download size={17} /> Download</a>
+                            <button type="button" onClick={() => { const player = new Audio(audio); void player.play(); }} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-black hover:bg-violet-500"><Play size={17} /> Putar Lagu</button>
+                            <a href={audio} download className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm font-black hover:bg-white/5"><Download size={17} /> Download</a>
                             <button type="button" onClick={() => saveProject(project.id)} className={`inline-flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-black ${saved ? "border-emerald-400/30 text-emerald-300" : "border-white/10 hover:bg-white/5"}`}><Save size={17} /> {saved ? "Tersimpan" : "Simpan Hasil"}</button>
                           </div>
                         </>
