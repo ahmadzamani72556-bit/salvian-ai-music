@@ -75,27 +75,45 @@ async function saveTask(workspace: string, title: string, lyrics: string, prompt
 }
 
 /**
- * Mureka has a 1024-character prompt limit. Keep the user's concept intact
- * first, then add compact, high-priority control instructions. The reference
- * controls musical identity; the user's concept controls the requested genre
- * and production direction; lyrics are immutable source text.
+ * Preserve the user's words while making the lyric payload easier for the
+ * singing model to parse. Existing section labels and line breaks are kept.
+ * Only whitespace is normalized; no words are rewritten or translated.
+ */
+function normalizeLyricsForMureka(lyrics: string) {
+  return lyrics
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map(line => line.replace(/[ \t]+/g, " ").trim())
+    .filter(line => line.length > 0)
+    .join("\n")
+    .trim();
+}
+
+/**
+ * Mureka has a 1024-character prompt limit. Keep the user's concept visible,
+ * then add compact, high-priority controls. The reference controls musical
+ * identity and vocal phrasing; the user's concept controls the requested
+ * genre/production; the lyrics remain immutable source text.
  */
 function buildReferencePrompt(prompt: string, language: string, gender: string, instrumental: boolean, tempo: number) {
   const concept = prompt || "Follow the user's requested music concept exactly.";
   const control = [
-    "REFERENCE AUDIO = PRIMARY MUSICAL ANCHOR: follow its groove, beat pattern, rhythmic feel, melodic contour, vocal phrasing, section flow, arrangement movement, transitions, dynamics, instrumentation character and overall production feel.",
-    "GENRE/STYLE LOCK: every explicit genre, style, mood, culture, era, remix type and production term written by the user is mandatory. Reinforce those terms throughout the song. NEVER substitute another dominant genre or generic template. If the concept says dangdut/dangdut remix/koplo/pesta, keep it recognizably dangdut throughout; do not turn it into reggae, rock, pop or another genre unless the user explicitly asks for that.",
-    "VOCAL QUALITY: produce a clear, clean, warm, rich and highly musical vocal with expressive dynamics, natural emotion, beautiful melodic ornamentation/cengkok, tasteful vibrato, controlled phrasing, strong pitch and an engaging human performance. Avoid flat, monotone, weak or robotic delivery.",
-    "LYRICS LOCK: sing the supplied lyrics exactly, in the same order. Do not rewrite, paraphrase, summarize, omit, add or replace words. Adapt melody and phrasing to the supplied lyrics instead of changing the lyrics.",
-    language ? `Language: ${language}.` : "",
+    "REFERENCE AUDIO = PRIMARY MUSICAL ANCHOR: follow its groove, beat pattern, rhythmic feel, melodic contour, vocal phrasing, section flow, arrangement movement, transitions, dynamics, instrumentation character and production feel. Do not replace the reference's musical/vocal flow with a generic template.",
+    "GENRE/STYLE LOCK: every explicit genre, style, mood, culture, era, remix type and production term written by the user is mandatory. Reinforce those terms throughout the song. NEVER substitute another dominant genre. If the user says dangdut, dangdut remix, koplo, pesta, slow, reggae, pop, rock or another style, follow exactly what the user requested rather than adding a fixed house genre.",
+    "VOCAL DICITION + CLARITY LOCK: use a clean, bright, warm, rich, close and intelligible studio vocal. Crisp consonants, natural Indonesian vowel pronunciation, controlled breath, stable pitch, clear word endings, low muddiness, low mumbling, restrained reverb and no robotic/monotone delivery. Keep every word understandable.",
+    "VOCAL EXPRESSION: preserve the reference vocal melody/phrasing while adding tasteful natural dynamics, emotional intensity, beautiful cengkok/ornamentation and controlled vibrato. Put cengkok mainly on sustained vowels so it never destroys the pronunciation of the lyrics.",
+    "LYRICS LOCK: sing the supplied lyrics exactly and in the same order. Do not rewrite, paraphrase, summarize, omit, invent, translate or replace words. Fit the reference melody and phrasing to the supplied lyrics; change the musical phrasing before changing a lyric word.",
+    "LYRIC TIMING: respect section order and line order. Keep syllables aligned to the musical phrase. Natural melisma is allowed on vowels, but all lyric words and their consonants must remain present and intelligible.",
+    language ? `LANGUAGE / DICTION: ${language}. Pronounce the supplied lyrics naturally in that language; never switch into pseudo-words or an unrelated language.` : "LANGUAGE / DICTION: Indonesian. Pronounce every supplied lyric naturally in Bahasa Indonesia; never switch into pseudo-words or an unrelated language.",
     gender ? `Preferred vocal gender: ${gender}.` : "",
     tempo > 0 ? `Target tempo: ${tempo} BPM.` : "",
     instrumental ? "INSTRUMENTAL ONLY; no vocals." : "",
     "Create an original result; use the reference for musical guidance, not for copying protected lyrics or a specific artist identity.",
   ].filter(Boolean).join("\n");
 
-  const maxConcept = Math.max(0, 1024 - control.length - 2);
-  return `${concept.slice(0, maxConcept)}\n${control}`.slice(0, 1024);
+  const separator = "\n";
+  const maxConcept = Math.max(0, 1024 - control.length - separator.length);
+  return `${concept.slice(0, maxConcept)}${separator}${control}`.slice(0, 1024);
 }
 
 export async function POST(request: NextRequest) {
@@ -104,7 +122,8 @@ export async function POST(request: NextRequest) {
   if (!workspace) return NextResponse.json({ success: false, error: "Workspace Music belum siap." }, { status: 400 });
 
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const lyrics = text(body.lyrics);
+  const rawLyrics = text(body.lyrics);
+  const lyrics = normalizeLyricsForMureka(rawLyrics);
   const language = text(body.language) || "Indonesia";
   const gender = text(body.gender);
   const instrumental = body.instrumental === true;
@@ -188,7 +207,7 @@ export async function POST(request: NextRequest) {
       task_id: taskId,
       status,
       librarySaved: true,
-      note: "Reference Remix: audio referensi menjadi jangkar ketukan/alur/melodi/vocal phrasing; konsep pengguna mengunci genre dan produksi; lirik dikirim sebagai teks pengganti yang wajib dinyanyikan.",
+      note: "Reference Remix: audio referensi tetap menjadi jangkar ketukan/alur/melodi/vocal phrasing; konsep pengguna mengunci genre/produksi; lirik dipertahankan persis dengan penguatan diksi Bahasa Indonesia, kejelasan vokal, dan cengkok pada vokal panjang tanpa menghilangkan kata.",
       provider: providerData,
     }));
   } catch (error) {
