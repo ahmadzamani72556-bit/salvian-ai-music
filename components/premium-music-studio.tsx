@@ -44,6 +44,8 @@ export default function PremiumMusicStudio() {
   const [vocalId, setVocalId] = useState("");
   const [referenceName, setReferenceName] = useState("");
   const [vocalName, setVocalName] = useState("");
+  const [referenceEngine, setReferenceEngine] = useState<MusicEngine | "">("");
+  const [vocalEngine, setVocalEngine] = useState<MusicEngine | "">("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
@@ -63,8 +65,8 @@ export default function PremiumMusicStudio() {
 
   const uploadFile = async (file: File, purpose: "reference" | "voice") => {
     if (!workspace) return; if (file.size > 10 * 1024 * 1024) { setNotice("Ukuran file maksimal 10 MB."); return; }
-    const form = new FormData(); form.append("file", file); form.append("purpose", purpose); setBusy(true); setNotice(purpose === "reference" ? "Mengunggah audio referensi ke mesin musik…" : "Membuat karakter vokal AI…");
-    try { const res = await fetch("/api/music/upload", { method: "POST", headers: headersFor(workspace), body: form }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Upload gagal."); if (purpose === "reference") { setReferenceId(String(data.id || "")); setReferenceName(file.name); } else { setVocalId(String(data.vocal_id || "")); setVocalName(file.name); } setNotice("Berhasil. File siap dipakai pada pembuatan musik."); } catch (e) { setNotice(e instanceof Error ? e.message : "Upload gagal."); } finally { setBusy(false); }
+    const form = new FormData(); form.append("file", file); form.append("purpose", purpose); form.append("engine", musicEngine); setBusy(true); setNotice(purpose === "reference" ? "Mengunggah audio referensi ke mesin musik…" : "Membuat karakter vokal AI…");
+    try { const res = await fetch("/api/music/upload", { method: "POST", headers: headersFor(workspace), body: form }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Upload gagal."); if (purpose === "reference") { setReferenceId(String(data.id || "")); setReferenceName(file.name); setReferenceEngine(musicEngine); } else { setVocalId(String(data.vocal_id || data.id || "")); setVocalName(file.name); setVocalEngine(musicEngine); } setNotice("Berhasil. File siap dipakai pada pembuatan musik."); } catch (e) { setNotice(e instanceof Error ? e.message : "Upload gagal."); } finally { setBusy(false); }
   };
 
   const pollTask = async (taskId: string, endpoint = "/api/music", engine = musicEngine) => {
@@ -75,7 +77,7 @@ export default function PremiumMusicStudio() {
 
   const generate = async () => {
     if (!workspace) return; if (!lyrics.trim() && !instrumental) { setNotice("Masukkan lirik atau aktifkan mode instrumental."); return; }
-    if (musicEngine !== "mureka" && (referenceId || vocalId)) { setNotice("Audio Referensi dan Voice & Vocal saat ini hanya diterapkan pada mesin Mureka. Pilih Mureka atau gunakan mesin lain tanpa file referensi/vokal."); return; }
+    if ((referenceId && referenceEngine !== musicEngine) || (vocalId && vocalEngine !== musicEngine)) { setNotice(`File referensi/vokal diunggah untuk mesin lain. Pilih ulang Audio Referensi dan Voice & Vocal saat mesin ${engineCards.find(e => e.id === musicEngine)?.title || musicEngine} aktif.`); return; }
     setBusy(true); setNotice(`Mengirim karya ke ${engineCards.find(e => e.id === musicEngine)?.title || "mesin musik"}…`);
     try {
       const title = (lyrics.split("\n").find(Boolean) || `${musicEngine} Music`).replace(/^\[.*?\]\s*/, "").slice(0, 70);
