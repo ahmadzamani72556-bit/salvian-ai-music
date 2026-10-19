@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import GenerationMonitorV3 from "../components/generation-monitor-v3";
 
 export const metadata: Metadata = {
   title: "SALVIAN AI MUSIC STUDIO — Premium AI Music Creation",
@@ -23,10 +22,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="id">
-      <body>
-        {children}
-        <GenerationMonitorV3 />
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
