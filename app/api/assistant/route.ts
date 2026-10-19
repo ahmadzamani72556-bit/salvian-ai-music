@@ -9,13 +9,37 @@ Anda adalah asisten percakapan serbaguna yang membantu pengguna dengan bahasa In
 SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, atau billing sendiri. Jangan meminta pengguna login, jangan membahas saldo/kredit/pembayaran, dan jangan mengarahkan pengguna ke halaman akun.
 Jangan pernah meminta password, API key, token, atau data rahasia. Jangan mengklaim dapat mengubah akun atau data pengguna secara langsung. Jangan meniru lirik berhak cipta atau mengklaim mengeksekusi tindakan yang tidak benar-benar dilakukan.`;
 
-function classifyOpenAIError(status: number, data: any) {
-  const code = String(data?.error?.code || "").toLowerCase();
-  const type = String(data?.error?.type || "").toLowerCase();
+function getProviderError(error: any) {
+  return {
+    code: String(error?.code || "").toLowerCase(),
+    type: String(error?.type || "").toLowerCase(),
+    requestId: String(error?.request_id || error?.headers?.["x-request-id"] || ""),
+  };
+}
+
+function classifyOpenAIError(status: number, error: any) {
+  const { code, type } = getProviderError(error);
   if (status === 401) return "API AI di server tidak valid atau tidak dapat digunakan.";
   if (status === 404) return "Model AI yang dipilih tidak tersedia untuk server ini.";
-  if (status === 429) return "Request AI sedang dibatasi. Coba lagi sebentar.";
+  if (status === 429) {
+    if (code === "insufficient_quota" || type === "insufficient_quota") {
+      return "Kuota API proyek yang dipakai Asisten AI tidak mencukupi atau batas penggunaan proyek sudah tercapai.";
+    }
+    if (code === "rate_limit_exceeded" || type === "rate_limit_exceeded") {
+      return "Permintaan Asisten AI sedang mencapai batas laju model. Silakan coba lagi sebentar.";
+    }
+    return "OpenAI menolak permintaan Asisten AI dengan HTTP 429. Penyebabnya bukan lagi disamarkan sebagai sekadar pembatasan.";
+  }
   return `Layanan Asisten AI sedang bermasalah (HTTP ${status}, ${code || type || "unknown"}).`;
+}
+
+async function createResponse(client: OpenAI, model: string, input: Array<{ role: "user" | "assistant"; content: string }>) {
+  return client.responses.create({
+    model,
+    instructions: SYSTEM_PROMPT,
+    input,
+    max_output_tokens: 1200,
+  });
 }
 
 export async function POST(request: Request) {
@@ -48,35 +72,39 @@ export async function POST(request: Request) {
     try {
       let response;
       try {
-        response = await client.responses.create({
-          model,
-          instructions: SYSTEM_PROMPT,
-          input: safeHistory,
-          max_output_tokens: 1200,
-        });
+        response = await createResponse(client, model, safeHistory);
       } catch (firstError: any) {
         const firstStatus = Number(firstError?.status || firstError?.statusCode || 0);
-        const firstCode = String(firstError?.code || "").toLowerCase();
-        // Recover from an obsolete/unavailable configured model instead of leaving chat unusable.
+        const { code: firstCode, type: firstType } = getProviderError(firstError);
+
+        // Recover from an obsolete/unavailable configured model.
         if ((firstStatus === 404 || firstCode === "model_not_found") && model !== "gpt-4.1-mini") {
-          response = await client.responses.create({
-            model: "gpt-4.1-mini",
-            instructions: SYSTEM_PROMPT,
-            input: safeHistory,
-            max_output_tokens: 1200,
-          });
+          response = await createResponse(client, "gpt-4.1-mini", safeHistory);
+        // Recover once from a model-specific rate limit without retrying quota errors.
+        } else if (firstStatus === 429 && (firstCode === "rate_limit_exceeded" || firstType === "rate_limit_exceeded") && model !== "gpt-4.1-mini") {
+          response = await createResponse(client, "gpt-4.1-mini", safeHistory);
         } else {
           throw firstError;
         }
       }
+
       const answer = response.output_text?.trim() || "";
       if (!answer) return NextResponse.json({ error: "Asisten AI tidak menghasilkan jawaban." }, { status: 502 });
       return NextResponse.json({ answer });
     } catch (error: any) {
       const status = Number(error?.status || error?.statusCode || 0);
-      console.error("SALVIAN MUSIC assistant OpenAI error", error);
+      const provider = getProviderError(error);
+      console.error("SALVIAN MUSIC assistant OpenAI error", {
+        status: status || 500,
+        code: provider.code || undefined,
+        type: provider.type || undefined,
+        requestId: provider.requestId || undefined,
+      });
       return NextResponse.json(
-        { error: classifyOpenAIError(status || 500, { error: { code: error?.code, type: error?.type } }), providerCode: error?.code || error?.type || undefined },
+        {
+          error: classifyOpenAIError(status || 500, error),
+          providerCode: provider.code || provider.type || undefined,
+        },
         { status: status >= 400 && status < 600 ? status : 500 }
       );
     }
