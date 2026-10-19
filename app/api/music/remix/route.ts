@@ -27,6 +27,10 @@ function normalizeLyricsForMureka(lyrics: string) { return lyrics.replace(/\r\n?
 
 function buildReferencePrompt(prompt: string, language: string, gender: string, instrumental: boolean, tempo: number) {
   const concept = prompt || "Follow the user's requested music concept exactly.";
+  const qasidahSholawat = /qasidah|sholawat|shalawat|religi|islami|islamic|maulid|nasyid/i.test(concept);
+  const qasidahControl = qasidahSholawat
+    ? "QASIDAH/SHOLAWAT SPECIAL LOCK = use a tasteful dangdut-religi Islamic groove: strong clean kick and bass pulse, crisp kendang/percussion accents, tasteful fills and transitions, energetic jedag-jedug without becoming EDM or changing the devotional character. VOCAL SPECIAL LOCK = very clear, bright, loud-but-natural, warm and full devotional lead; crisp Indonesian/Arabic diction, every syllable intelligible; sweet authentic dangdut cengkok, controlled melisma and vibrato on sustained notes only, never covering words. Keep the vocal in front, clean, dry-to-moderate reverb and free of muddiness, nasal tone, clipping or harshness."
+    : "";
   const control = [
     "REFERENCE AUDIO LOCK = ABSOLUTE PRIMARY ANCHOR. Keep its beat placement, groove, pocket, tempo feel, melodic contour, vocal melody/nada, phrasing/cadence, section order, transitions, arrangement flow, instrumentation feel and vocal character. Do not replace, flatten or reinterpret the reference flow with a generic template.",
     "LYRIC DICTION LOCK = EVERY WORD MUST BE CLEAR. Sing the supplied lyrics exactly, in exact line/section order. Never rewrite, paraphrase, translate, invent, skip, merge, swap or randomly repeat words. Preserve syllables and word endings. Never mumble or turn Indonesian words into unclear/foreign phonemes.",
@@ -35,6 +39,7 @@ function buildReferencePrompt(prompt: string, language: string, gender: string, 
     "CENGKOK LOCK = BEAUTIFUL AND PRECISE. Follow the reference vocal melody and phrasing; add tasteful authentic cengkok, melisma and controlled vibrato mainly on sustained vowels and phrase endings. Keep cengkok fluid and expressive like a polished real singer, but NEVER let ornamentation cover or distort lyric consonants.",
     "JEDAG-JEDUG = STRONGER BUT MUSICAL. Increase kick impact, bass pulse, snare/clap and percussion accents, rhythmic fills, drops and transitions. Make the groove hit clearly and feel energetic while preserving the reference's original rhythmic identity and requested genre/style.",
     "MIX = SMOOTH + CLEAN + BRIGHT + DEEP + BALANCED. Tight round low-end, punchy controlled kick/bass, clean open mids, crisp non-harsh highs, separated instruments, centered vocal, controlled dynamics and moderate reverb. No mud, boom, boxiness, clipping, brittle highs or washed-out vocal. Music and vocal must sit together naturally.",
+    qasidahControl,
     "STYLE LOCK = every explicit genre, remix type, mood and production term in the user's concept is mandatory. Reinforce the requested style without substituting another dominant genre. Dangdut stays dangdut; dangdut remix/pesta stays dangdut remix/pesta; slow stays slow; other requested styles remain themselves.",
     language ? `Language: ${language}; keep diction consistent.` : "Language: Indonesian; keep diction consistently Bahasa Indonesia.",
     gender ? `Preferred vocal gender: ${gender}.` : "",
@@ -66,6 +71,6 @@ export async function POST(request: NextRequest) {
     const status = text(field(providerData, "status")) || "preparing";
     const saved = await saveTask(workspace, title, lyrics, musicPrompt, taskId, status, { musicEngine: "mureka", billingProvider: "mureka", stage: "stage2-reference-remix", hasReference: true, hasVoice: false, referenceGeneration: true, referenceUploadPurpose: "remix", model, provider: providerData });
     if (!saved) return clearStage2Cookies(NextResponse.json({ success: false, error: "Mureka menerima Task ID tetapi Library gagal menyimpan task.", taskId, librarySaved: false }, { status: 503 }));
-    return clearStage2Cookies(NextResponse.json({ success: true, mode: "mureka-reference-remix", musicEngine: "mureka", billingProvider: "mureka", taskId, task_id: taskId, status, librarySaved: true, note: "Reference Remix: audio referensi terkunci sebagai jangkar; lirik dikunci kata-per-kata; vokal diperjelas dengan cengkok presisi; jedag-jedug diperkuat; mix dibuat lebih halus, terang, jernih dan seimbang.", provider: providerData }));
+    return clearStage2Cookies(NextResponse.json({ success: true, mode: "mureka-reference-remix", musicEngine: "mureka", billingProvider: "mureka", taskId, task_id: taskId, status, librarySaved: true, note: qasidahSholawat ? "Qasidah/Sholawat: vokal diperjelas, diction dikunci, cengkok dangdut-religi diperkuat, dan ketukan dangdut sholawat dibuat lebih punchy namun tetap Islami dan musikal." : "Reference Remix: audio referensi terkunci sebagai jangkar; lirik dikunci kata-per-kata; vokal diperjelas dengan cengkok presisi; jedag-jedug diperkuat; mix dibuat lebih halus, terang, jernih dan seimbang.", provider: providerData }));
   } catch (error) { console.error("SALVIAN Stage-2 Mureka reference remix error", error); return clearStage2Cookies(NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Gagal menghubungkan Mureka Reference Remix." }, { status: 500 })); }
 }
