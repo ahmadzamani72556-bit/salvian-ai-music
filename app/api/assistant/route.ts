@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
 
 export const runtime = "nodejs";
 export const maxDuration = 25;
@@ -9,50 +8,68 @@ Anda adalah asisten percakapan serbaguna yang membantu pengguna dengan bahasa In
 SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, atau billing sendiri. Jangan meminta pengguna login, jangan membahas saldo/kredit/pembayaran, dan jangan mengarahkan pengguna ke halaman akun.
 Jangan pernah meminta password, API key, token, atau data rahasia. Jangan mengklaim dapat mengubah akun atau data pengguna secara langsung. Jangan meniru lirik berhak cipta atau mengklaim mengeksekusi tindakan yang tidak benar-benar dilakukan.`;
 
-const FAST_MODEL = "gpt-4.1-mini";
+// Free-tier Gemini model: no OpenAI token billing is used by the assistant.
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
 const MAX_HISTORY_MESSAGES = 4;
 const MAX_HISTORY_CHARS = 1800;
 const MAX_OUTPUT_TOKENS = 650;
 
-type ChatMessage = { role: "user" | "assistant"; content: string };
-
-function providerInfo(error: any) {
-  return {
-    code: String(error?.code || "").toLowerCase(),
-    type: String(error?.type || "").toLowerCase(),
-    requestId: String(error?.request_id || error?.headers?.["x-request-id"] || ""),
-  };
-}
-
-function classifyOpenAIError(status: number, error: any) {
-  const { code, type } = providerInfo(error);
-  if (status === 401) return "API AI di server tidak valid atau tidak dapat digunakan.";
-  if (status === 404) return "Model AI Asisten tidak tersedia untuk API yang dipakai server.";
-  if (status === 429) {
-    if (code === "insufficient_quota" || type === "insufficient_quota") {
-      return "Kuota API proyek yang dipakai Asisten AI tidak mencukupi atau batas penggunaan proyek sudah tercapai.";
-    }
-    if (code === "rate_limit_exceeded" || type === "rate_limit_exceeded") {
-      return "Permintaan Asisten AI sedang mencapai batas laju model. Coba lagi sebentar.";
-    }
-    return "OpenAI menolak permintaan Asisten AI dengan HTTP 429.";
-  }
-  if (status === 408 || status === 504) return "Asisten AI terlalu lama merespons. Coba lagi.";
-  return `Layanan Asisten AI bermasalah (HTTP ${status}, ${code || type || "unknown"}).`;
-}
+ type ChatMessage = { role: "user" | "assistant"; content: string };
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function createResponse(client: OpenAI, input: ChatMessage[], model: string) {
-  return client.responses.create({
-    model,
-    instructions: SYSTEM_PROMPT,
-    input,
-    max_output_tokens: MAX_OUTPUT_TOKENS,
-    signal: AbortSignal.timeout(20000),
+function normalizeHistory(history: unknown[], message: string): ChatMessage[] {
+  const safe = history
+    .filter((item: unknown) => {
+      if (!item || typeof item !== "object") return false;
+      const value = item as { role?: unknown; content?: unknown };
+      return (value.role === "user" || value.role === "assistant") && typeof value.content === "string";
+    })
+    .slice(-MAX_HISTORY_MESSAGES)
+    .map((item: { role: "user" | "assistant"; content: string }) => ({
+      role: item.role,
+      content: item.content.slice(0, MAX_HISTORY_CHARS),
+    }));
+  safe.push({ role: "user", content: message });
+  return safe;
+}
+
+function toGeminiContents(history: ChatMessage[]) {
+  return history.map(item => ({
+    role: item.role === "assistant" ? "model" : "user",
+    parts: [{ text: item.content }],
+  }));
+}
+
+function classifyGeminiError(status: number, data: any) {
+  const message = String(data?.error?.message || "");
+  if (status === 400) return "Permintaan Asisten AI tidak valid.";
+  if (status === 401 || status === 403) return "Kunci Gemini untuk Asisten AI tidak valid atau tidak memiliki akses.";
+  if (status === 404) return "Model Gemini Asisten AI tidak tersedia.";
+  if (status === 429) return "Batas gratis Gemini sedang tercapai. Coba lagi sebentar.";
+  if (status === 408 || status === 504) return "Asisten AI terlalu lama merespons. Coba lagi.";
+  return `Layanan Asisten AI bermasalah (HTTP ${status}${message ? `: ${message.slice(0, 180)}` : ""}).`;
+}
+
+async function callGemini(apiKey: string, contents: ReturnType<typeof toGeminiContents>) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents,
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+      },
+    }),
+    signal: AbortSignal.timeout(18000),
   });
+  const data = await response.json().catch(() => ({}));
+  return { response, data };
 }
 
 export async function POST(request: Request) {
@@ -64,68 +81,42 @@ export async function POST(request: Request) {
     if (!message) return NextResponse.json({ error: "Tulis pertanyaan Anda terlebih dahulu." }, { status: 400 });
     if (message.length > 12000) return NextResponse.json({ error: "Pesan terlalu panjang untuk satu permintaan. Bagi menjadi beberapa pesan." }, { status: 400 });
 
-    const safeHistory: ChatMessage[] = history
-      .filter((item: unknown) => {
-        if (!item || typeof item !== "object") return false;
-        const value = item as { role?: unknown; content?: unknown };
-        return (value.role === "user" || value.role === "assistant") && typeof value.content === "string";
-      })
-      .slice(-MAX_HISTORY_MESSAGES)
-      .map((item: { role: "user" | "assistant"; content: string }) => ({
-        role: item.role,
-        content: item.content.slice(0, MAX_HISTORY_CHARS),
-      }));
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ error: "Asisten AI belum aktif: GEMINI_API_KEY belum tersedia di server." }, { status: 503 });
+    }
 
-    safeHistory.push({ role: "user", content: message });
+    const contents = toGeminiContents(normalizeHistory(history, message));
+    let result = await callGemini(apiKey, contents);
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return NextResponse.json({ error: "Asisten AI belum aktif di server: OPENAI_API_KEY belum tersedia." }, { status: 503 });
+    // Retry once only for a transient rate limit. No OpenAI fallback is used.
+    if (result.response.status === 429) {
+      await sleep(500);
+      result = await callGemini(apiKey, contents);
+    }
 
-    const client = new OpenAI({ apiKey });
-    // The Studio client expects a JSON response. Keep the assistant on a fast, stable model
-    // instead of coupling it to the selected music-generation engine.
-    const model = FAST_MODEL;
-
-    let response: any;
-    try {
-      try {
-        response = await createResponse(client, safeHistory, model);
-      } catch (firstError: any) {
-        const firstStatus = Number(firstError?.status || firstError?.statusCode || 0);
-        const first = providerInfo(firstError);
-        if (firstStatus === 429 && (first.code === "rate_limit_exceeded" || first.type === "rate_limit_exceeded")) {
-          await sleep(700);
-          response = await createResponse(client, safeHistory, model);
-        } else {
-          throw firstError;
-        }
-      }
-    } catch (error: any) {
-      const status = Number(error?.status || error?.statusCode || 0);
-      const provider = providerInfo(error);
-      console.error("SALVIAN MUSIC assistant OpenAI error", {
-        status: status || 500,
-        code: provider.code || undefined,
-        type: provider.type || undefined,
-        requestId: provider.requestId || undefined,
+    if (!result.response.ok) {
+      console.error("SALVIAN MUSIC assistant Gemini error", {
+        status: result.response.status,
+        code: result.data?.error?.status || undefined,
       });
       return NextResponse.json(
-        {
-          error: classifyOpenAIError(status || 500, error),
-          providerCode: provider.code || provider.type || undefined,
-        },
-        { status: status >= 400 && status < 600 ? status : 500 }
+        { error: classifyGeminiError(result.response.status, result.data), providerCode: result.data?.error?.status || undefined },
+        { status: result.response.status >= 400 && result.response.status < 600 ? result.response.status : 502 }
       );
     }
 
-    const answer = response?.output_text?.trim() || "";
-    if (!answer) {
-      return NextResponse.json({ error: "Asisten AI selesai memproses tetapi tidak menghasilkan jawaban." }, { status: 502 });
-    }
+    const answer = Array.isArray(result.data?.candidates?.[0]?.content?.parts)
+      ? result.data.candidates[0].content.parts.map((part: { text?: string }) => part.text || "").join("").trim()
+      : "";
 
+    if (!answer) return NextResponse.json({ error: "Asisten AI selesai memproses tetapi tidak menghasilkan jawaban." }, { status: 502 });
     return NextResponse.json({ answer });
-  } catch (error) {
-    console.error("SALVIAN AI MUSIC assistant error", error);
+  } catch (error: any) {
+    console.error("SALVIAN AI MUSIC assistant error", { name: error?.name, message: error?.message });
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      return NextResponse.json({ error: "Asisten AI terlalu lama merespons. Coba lagi." }, { status: 504 });
+    }
     return NextResponse.json({ error: "Terjadi kesalahan saat menghubungkan ke Asisten AI." }, { status: 500 });
   }
 }
