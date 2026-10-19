@@ -7,54 +7,84 @@ export const maxDuration = 300;
 const MUREKA_BASE_URL = (process.env.MUREKA_BASE_URL || "https://api.mureka.ai").replace(/\/$/, "");
 const MUREKA_API_KEY = process.env.MUREKA_API_KEY || process.env.MUSIC_API_KEY;
 
-function text(value: unknown) { return typeof value === "string" ? value.trim() : ""; }
+function text(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function field(value: unknown, key: string): unknown {
   if (!value || typeof value !== "object") return undefined;
   return (value as Record<string, unknown>)[key];
 }
-function nestedMessage(value: unknown) { return text(field(value, "message")); }
+
+function nestedMessage(value: unknown) {
+  return text(field(value, "message"));
+}
+
 async function readJson(response: Response): Promise<Record<string, unknown>> {
   const raw = await response.text().catch(() => "");
   if (!raw) return {};
   try {
     const parsed: unknown = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : { raw };
-  } catch { return { raw }; }
+  } catch {
+    return { raw };
+  }
 }
+
 function clearStage2Cookies(response: NextResponse) {
-  const options = { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax" as const, maxAge: 0 };
+  const options = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    maxAge: 0,
+  };
   response.cookies.set("salvian_stage2_pending", "", { ...options, path: "/api/music" });
   response.cookies.set("salvian_stage2_remix_id", "", { ...options, path: "/api/music" });
   response.cookies.set("salvian_stage2_remix_id_root", "", { ...options, path: "/" });
   return response;
 }
 
-async function murekaUploadUrl(url: string, purpose: "reference" | "remix") {
+async function murekaUploadUrl(url: string) {
   const form = new FormData();
   form.append("url", url);
-  form.append("purpose", purpose);
+  form.append("purpose", "remix");
+
   const response = await fetch(`${MUREKA_BASE_URL}/v1/files/upload`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${MUREKA_API_KEY}`, Accept: "application/json" },
+    headers: {
+      Authorization: `Bearer ${MUREKA_API_KEY}`,
+      Accept: "application/json",
+    },
     body: form,
     cache: "no-store",
   });
+
   const data = await readJson(response);
   if (!response.ok) {
     const reason = nestedMessage(field(data, "error")) || text(field(data, "message"));
-    throw new Error(`Mureka upload ${purpose} gagal (${response.status}): ${reason || "respons tidak menjelaskan penyebab"}`);
+    throw new Error(`Mureka upload remix gagal (${response.status}): ${reason || "respons tidak menjelaskan penyebab"}`);
   }
+
   const id = text(
     field(data, "id") || field(data, "file_id") || field(data, "fileId") || field(data, "upload_id") || field(data, "uploadId") ||
     field(field(data, "data"), "id") || field(field(data, "data"), "file_id") || field(field(data, "data"), "fileId") ||
     field(field(data, "data"), "upload_id") || field(field(data, "data"), "uploadId") ||
     field(field(data, "file"), "id") || field(field(data, "file"), "file_id") || field(field(data, "file"), "upload_id")
   );
-  if (!id) throw new Error(`Mureka tidak mengembalikan ID untuk upload ${purpose}.`);
+
+  if (!id) throw new Error("Mureka tidak mengembalikan ID untuk upload remix.");
   return { id, data };
 }
 
-async function saveTask(workspace: string, title: string, lyrics: string, prompt: string, taskId: string, status: string, providerData: unknown) {
+async function saveTask(
+  workspace: string,
+  title: string,
+  lyrics: string,
+  prompt: string,
+  taskId: string,
+  status: string,
+  providerData: unknown,
+) {
   return createMusicProjectServer(workspace, {
     title,
     lyrics,
@@ -67,25 +97,43 @@ async function saveTask(workspace: string, title: string, lyrics: string, prompt
   });
 }
 
-function buildReferencePrompt(prompt: string, language: string, gender: string, instrumental: boolean) {
+function buildStrictRemixPrompt(
+  prompt: string,
+  language: string,
+  gender: string,
+  instrumental: boolean,
+  tempo: number,
+) {
   const parts = [
-    "SALVIAN AI MUSIC REFERENCE MODE.",
-    prompt || "Follow the user's requested music concept exactly.",
+    "SALVIAN AI STRICT REFERENCE REMIX.",
+    "PRIMARY GOAL: preserve the musical identity of the uploaded reference while creating a new performance with the supplied lyrics.",
+    prompt || "Follow the user's music concept exactly.",
     `Language: ${language || "Indonesia"}.`,
+    tempo > 0 ? `Target tempo: ${tempo} BPM; keep it consistent with the reference feel unless the reference clearly indicates otherwise.` : "",
     gender ? `Vocal gender: ${gender}.` : "",
-    instrumental ? "Instrumental only; no vocals." : "",
-    "REFERENCE MUSIC HAS PRIORITY: follow the uploaded reference's groove, rhythmic feel, tempo feel, harmonic movement, instrumentation, arrangement character, section pacing, dynamics and production character. Keep these musical characteristics clearly audible in the result.",
-    "LYRICS HAVE PRIORITY FOR WORDS: sing the supplied lyrics exactly as written and in the supplied order. Never replace, paraphrase, summarize, skip or invent lyric lines. Adapt melody and vocal phrasing to the supplied lyrics; do not rewrite the lyrics to fit the reference.",
-    "VOCAL REFERENCE: when a Voice & Vocal reference is supplied, use that vocal character together with the music reference.",
-    "Create an original song; use the reference as musical guidance, not as a request to copy the original recording.",
+    instrumental ? "Instrumental only; do not sing." : "",
+    "REFERENCE AUDIO IS THE MUSICAL MASTER: preserve its tempo feel, groove, rhythmic pattern, chord/harmonic movement, melodic contour where appropriate, instrumentation, arrangement, section order, transitions, fills, dynamics, energy and overall production character. Do not turn the reference into a generic genre song.",
+    "CONCEPT IS THE ARRANGEMENT DIRECTION: apply the user's concept on top of the reference without discarding the reference's recognizable musical feel.",
+    "LYRICS ARE LOCKED: sing the supplied lyrics exactly as provided and in the same order. Do not rewrite, paraphrase, summarize, replace, omit, repeat, or invent words. Keep every section marker and line order when possible.",
+    "PHRASING: fit the new lyrics naturally into the reference's musical phrasing and section structure. Change vocal phrasing as needed to accommodate the exact words, but do not change the words themselves.",
+    "OUTPUT: a polished original remix/performance that is clearly guided by the uploaded reference, the user's concept, and the exact supplied lyrics.",
   ].filter(Boolean);
+
   return parts.join("\n").slice(0, 1024);
 }
 
 export async function POST(request: NextRequest) {
-  if (!MUREKA_API_KEY) return NextResponse.json({ success: false, error: "MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di server." }, { status: 503 });
+  if (!MUREKA_API_KEY) {
+    return NextResponse.json(
+      { success: false, error: "MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di server." },
+      { status: 503 },
+    );
+  }
+
   const workspace = request.headers.get("x-music-workspace")?.trim();
-  if (!workspace) return NextResponse.json({ success: false, error: "Workspace Music belum siap." }, { status: 400 });
+  if (!workspace) {
+    return NextResponse.json({ success: false, error: "Workspace Music belum siap." }, { status: 400 });
+  }
 
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lyrics = text(body.lyrics);
@@ -93,52 +141,71 @@ export async function POST(request: NextRequest) {
   const gender = text(body.gender);
   const instrumental = body.instrumental === true;
   const prompt = text(body.prompt || body.style).slice(0, 900);
-  const title = text(body.title) || "Salvian AI Music — Reference Generation";
-  let referenceId = text(body.reference_id || body.referenceId);
+  const title = text(body.title) || "Salvian AI Music — Reference Remix";
   const referenceUrl = text(body.reference_url || body.referenceUrl);
-  const vocalId = text(body.vocal_id || body.vocalId);
+  const legacyReferenceId = text(body.reference_id || body.referenceId);
+  const suppliedRemixUploadId = text(body.remix_upload_id || body.remixUploadId);
+  const tempoRaw = Number(body.tempo || 0);
+  const tempo = Number.isFinite(tempoRaw) ? Math.max(0, Math.round(tempoRaw)) : 0;
   const nRaw = Number(body.n || 1);
   const n = Number.isFinite(nRaw) ? Math.min(3, Math.max(1, Math.floor(nRaw))) : 1;
 
-  if (!lyrics && !instrumental) return clearStage2Cookies(NextResponse.json({ success: false, error: "Lirik baru wajib diisi." }, { status: 400 }));
-  if (lyrics.length > 5000) return clearStage2Cookies(NextResponse.json({ success: false, error: "Lirik maksimal 5000 karakter." }, { status: 400 }));
+  if (!lyrics && !instrumental) {
+    return clearStage2Cookies(NextResponse.json({ success: false, error: "Lirik baru wajib diisi." }, { status: 400 }));
+  }
+  if (lyrics.length > 5000) {
+    return clearStage2Cookies(NextResponse.json({ success: false, error: "Lirik maksimal 5000 karakter." }, { status: 400 }));
+  }
 
   try {
-    // Stage-1 stores the complete reference in Blob. At generation time the
-    // reference is converted specifically for Mureka's reference_id path.
-    // Do NOT route it through song/remix when the goal is simultaneous
-    // reference-music + supplied-lyrics + optional cloned-vocal control.
-    if (!referenceId && referenceUrl) referenceId = referenceUrl;
-    if (referenceId && /^https?:\/\//i.test(referenceId)) {
-      const uploaded = await murekaUploadUrl(referenceId, "reference");
-      referenceId = uploaded.id;
+    // IMPORTANT: When an Audio Referensi exists, use Mureka's REMIX endpoint.
+    // This is the path designed to generate from an uploaded song while
+    // accepting new lyrics + a controlling prompt. The previous implementation
+    // incorrectly converted the audio to purpose=reference and called
+    // /v1/song/generate, which weakened adherence to the actual recording.
+    let remixUploadId = suppliedRemixUploadId;
+
+    // The current browser stores the complete audio in Blob first. At Stage-2
+    // we convert that exact URL into a Mureka purpose=remix upload. This keeps
+    // the full source available to Mureka and avoids the browser/Vercel upload
+    // size limit.
+    if (!remixUploadId && referenceUrl) {
+      const uploaded = await murekaUploadUrl(referenceUrl);
+      remixUploadId = uploaded.id;
     }
 
-    // Reference generation needs the strongest regular Mureka model so the
-    // music reference, lyrics and optional cloned vocal are balanced together.
-    // Keep the explicit model for text-only generations, but force 9.5 when a
-    // reference is present because the Studio reference path is the quality-
-    // critical path being fixed here.
-    const requestedModel = text(body.model) || "mureka-9.5";
-    const modelRaw = referenceId ? "mureka-9.5" : requestedModel;
-    const model = ["auto", "mureka-7.6", "mureka-o2", "mureka-8", "mureka-9", "mureka-9.5"].includes(modelRaw) ? modelRaw : "mureka-9.5";
-    if (model === "mureka-o2" && vocalId) {
-      return clearStage2Cookies(NextResponse.json({ success: false, error: "Model Mureka O2 tidak mendukung Voice & Vocal. Pilih Pro atau Adroit untuk Voice & Vocal." }, { status: 400 }));
+    if (!remixUploadId && legacyReferenceId && !/^https?:\/\//i.test(legacyReferenceId)) {
+      // A legacy reference_id was created with purpose=reference and cannot be
+      // safely passed to /song/remix. Do not silently fall back to the weaker
+      // generation path; ask the client to provide the original audio URL.
+      return clearStage2Cookies(NextResponse.json({
+        success: false,
+        stage: "mureka-strict-reference-remix",
+        error: "Audio Referensi lama belum memiliki upload Remix Mureka. Pilih kembali file Audio Referensi agar musik sumber diproses melalui jalur Remix penuh.",
+      }, { status: 409 }));
     }
 
-    const musicPrompt = buildReferencePrompt(prompt, language, gender, instrumental);
+    if (!remixUploadId) {
+      return clearStage2Cookies(NextResponse.json({
+        success: false,
+        stage: "mureka-strict-reference-remix",
+        error: "Audio Referensi wajib tersedia untuk mode Remix penuh.",
+      }, { status: 400 }));
+    }
+
+    // The strict-reference path deliberately uses Remix rather than the
+    // lyrics-to-song reference_id path. Remix accepts uploaded audio + new
+    // lyrics + prompt together, which is exactly the combination this Studio
+    // needs for strong adherence to the source music.
+    const musicPrompt = buildStrictRemixPrompt(prompt, language, gender, instrumental, tempo);
     const musicRequest: Record<string, unknown> = {
+      upload_audio_id: remixUploadId,
       lyrics: lyrics.slice(0, 5000),
-      model,
-      n,
       prompt: musicPrompt,
-      stream: body.stream === true,
+      n,
     };
-    if (gender === "female" || gender === "male") musicRequest.gender = gender;
-    if (referenceId) musicRequest.reference_id = referenceId;
-    if (vocalId) musicRequest.vocal_id = vocalId;
 
-    const providerResponse = await fetch(`${MUREKA_BASE_URL}/v1/song/generate`, {
+    const providerResponse = await fetch(`${MUREKA_BASE_URL}/v1/song/remix`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${MUREKA_API_KEY}`,
@@ -154,44 +221,64 @@ export async function POST(request: NextRequest) {
       const reason = text(field(providerData, "message")) || nestedMessage(field(providerData, "error")) || text(field(providerData, "failed_reason")) || text(field(providerData, "detail"));
       return clearStage2Cookies(NextResponse.json({
         success: false,
-        stage: "mureka-reference-generate",
-        error: reason ? `Mureka menolak proses pembuatan lagu: ${reason}` : `Mureka menolak proses pembuatan lagu (${providerResponse.status}).`,
+        stage: "mureka-strict-reference-remix",
+        error: reason
+          ? `Mureka menolak Remix Referensi: ${reason}`
+          : `Mureka menolak Remix Referensi (${providerResponse.status}).`,
         provider: providerData,
       }, { status: providerResponse.status }));
     }
 
     const taskId = text(field(providerData, "id") || field(providerData, "task_id") || field(providerData, "taskId"));
-    if (!taskId) return clearStage2Cookies(NextResponse.json({ success: false, stage: "mureka-reference-generate", error: "Mureka tidak mengembalikan Task ID.", provider: providerData }, { status: 502 }));
+    if (!taskId) {
+      return clearStage2Cookies(NextResponse.json({
+        success: false,
+        stage: "mureka-strict-reference-remix",
+        error: "Mureka tidak mengembalikan Task ID.",
+        provider: providerData,
+      }, { status: 502 }));
+    }
 
     const status = text(field(providerData, "status")) || "preparing";
     const saved = await saveTask(workspace, title, lyrics, musicPrompt, taskId, status, {
       musicEngine: "mureka",
       billingProvider: "mureka",
-      stage: referenceId || vocalId ? "stage2-reference-vocal" : "stage2-text",
-      hasReference: Boolean(referenceId),
-      hasVoice: Boolean(vocalId),
+      stage: "stage2-strict-reference-remix",
+      hasReference: true,
+      hasVoice: false,
       referenceGeneration: true,
-      referenceUploadPurpose: referenceId ? "reference" : null,
+      referenceUploadPurpose: "remix",
+      remixUploadId,
       provider: providerData,
     });
-    if (!saved) return clearStage2Cookies(NextResponse.json({ success: false, error: "Mureka menerima Task ID tetapi Library gagal menyimpan task.", taskId, librarySaved: false }, { status: 503 }));
+
+    if (!saved) {
+      return clearStage2Cookies(NextResponse.json({
+        success: false,
+        error: "Mureka menerima Task ID tetapi Library gagal menyimpan task.",
+        taskId,
+        librarySaved: false,
+      }, { status: 503 }));
+    }
 
     return clearStage2Cookies(NextResponse.json({
       success: true,
-      mode: referenceId && vocalId ? "mureka-reference-vocal" : referenceId ? "mureka-reference" : "mureka-generate",
+      mode: "mureka-strict-reference-remix",
       musicEngine: "mureka",
       billingProvider: "mureka",
       taskId,
       task_id: taskId,
       status,
       librarySaved: true,
-      note: referenceId
-        ? "Audio Referensi dipakai sebagai reference_id; lirik tetap dikirim sebagai sumber kata; Voice & Vocal dikirim sebagai vocal_id bila tersedia; reference path menggunakan Mureka 9.5."
-        : "Lagu dibuat melalui song/generate dengan lirik dan konsep pengguna.",
+      referenceUploadPurpose: "remix",
+      note: "Audio Referensi diproses melalui Mureka Remix penuh; lirik dikunci sebagai input kata; konsep musik dikirim sebagai kontrol aransemen.",
       provider: providerData,
     }));
   } catch (error) {
-    console.error("SALVIAN Stage-2 Mureka reference generation error", error);
-    return clearStage2Cookies(NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Gagal menghubungkan Mureka Stage-2." }, { status: 500 }));
+    console.error("SALVIAN strict Mureka reference remix error", error);
+    return clearStage2Cookies(NextResponse.json({
+      success: false,
+      error: error instanceof Error ? error.message : "Gagal menghubungkan Mureka Remix.",
+    }, { status: 500 }));
   }
 }
