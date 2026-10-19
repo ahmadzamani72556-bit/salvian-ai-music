@@ -229,7 +229,7 @@ async function elevenCompose(body: Record<string, unknown>) {
   });
   const planData = await readJson(planResponse) as any;
   const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? planData : null;
-  const requestBody: Record<string, unknown> = { model_id: "music_v2_5", music_length_ms: durationMs, force_instrumental: body.instrumental === true, store_for_inpainting: false };
+  const requestBody: Record<string, unknown> = { model_id: "music_v2_5", force_instrumental: body.instrumental === true, store_for_inpainting: false };
   if (compositionPlan) {
     compositionPlan.chunks = compositionPlan.chunks.map((chunk: any) => ({ ...chunk, context_adherence: "high" }));
     const conditioningIds = [body.reference_id, body.vocal_id].filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
@@ -240,6 +240,7 @@ async function elevenCompose(body: Record<string, unknown>) {
     requestBody.composition_plan = compositionPlan;
   } else {
     requestBody.prompt = prompt;
+    requestBody.music_length_ms = durationMs;
   }
   const response = await fetch(`${ELEVEN_BASE_URL}/v1/music?output_format=mp3_48000_192`, {
     method: "POST",
