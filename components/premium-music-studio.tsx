@@ -42,6 +42,7 @@ export default function PremiumMusicStudio() {
   const [notice, setNotice] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [referenceId, setReferenceId] = useState("");
+  const [referenceRemixId, setReferenceRemixId] = useState("");
   const [vocalId, setVocalId] = useState("");
   const [referenceName, setReferenceName] = useState("");
   const [vocalName, setVocalName] = useState("");
@@ -79,7 +80,7 @@ export default function PremiumMusicStudio() {
         setPrompt(String(draft.prompt || "")); setLyrics(String(draft.lyrics || "")); setGender(String(draft.gender || "female"));
         setInstrumental(Boolean(draft.instrumental)); setTempo(Number(draft.tempo || 100)); setLanguage(String(draft.language || "Indonesia"));
         setMusicEngine((draft.musicEngine || "mureka") as MusicEngine); setModel((draft.model || "Pro") as Model);
-        setReferenceId(String(draft.referenceId || "")); setReferenceName(String(draft.referenceName || "")); setReferenceEngine((draft.referenceEngine || "") as MusicEngine | "");
+        setReferenceId(String(draft.referenceId || "")); setReferenceRemixId(String(draft.referenceRemixId || "")); setReferenceName(String(draft.referenceName || "")); setReferenceEngine((draft.referenceEngine || "") as MusicEngine | "");
         setVocalId(String(draft.vocalId || "")); setVocalName(String(draft.vocalName || "")); setVocalEngine((draft.vocalEngine || "") as MusicEngine | "");
       }
     } catch {}
@@ -88,9 +89,9 @@ export default function PremiumMusicStudio() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const draft = { prompt, lyrics, gender, instrumental, tempo, language, musicEngine, model, referenceId, referenceName, referenceEngine, vocalId, vocalName, vocalEngine };
+    const draft = { prompt, lyrics, gender, instrumental, tempo, language, musicEngine, model, referenceId, referenceRemixId, referenceName, referenceEngine, vocalId, vocalName, vocalEngine };
     window.localStorage.setItem("salvian_music_stage2_draft", JSON.stringify(draft));
-  }, [prompt, lyrics, gender, instrumental, tempo, language, musicEngine, model, referenceId, referenceName, referenceEngine, vocalId, vocalName, vocalEngine]);
+  }, [prompt, lyrics, gender, instrumental, tempo, language, musicEngine, model, referenceId, referenceRemixId, referenceName, referenceEngine, vocalId, vocalName, vocalEngine]);
 
   useEffect(() => {
     const openAssistant = () => setChatOpen(true);
@@ -120,8 +121,13 @@ export default function PremiumMusicStudio() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Upload gagal.");
       if (purpose === "reference") {
-        setReferenceId(String(data.id || data.url || "")); setReferenceName(file.name); setReferenceEngine(musicEngine);
-        setNotice("Audio Referensi berhasil disimpan. Tetap di halaman pembuatan musik.");
+        const nextReferenceId = String(data.id || data.url || "");
+        const nextRemixId = String(data.remix_upload_id || "");
+        setReferenceId(nextReferenceId);
+        setReferenceRemixId(nextRemixId);
+        setReferenceName(file.name);
+        setReferenceEngine(musicEngine);
+        setNotice(nextRemixId ? "Audio Referensi berhasil disimpan untuk Stage-1 dan Remix penuh. Tetap di halaman pembuatan musik." : "Audio Referensi berhasil disimpan. Tetap di halaman pembuatan musik.");
       } else {
         setVocalId(String(data.vocal_id || data.id || "")); setVocalName(file.name); setVocalEngine(musicEngine);
         setNotice("Voice & Vocal berhasil disimpan. Tetap di halaman pembuatan musik.");
@@ -170,8 +176,10 @@ export default function PremiumMusicStudio() {
     try {
       const title = (lyrics.split("\n").find(Boolean) || `${musicEngine} Music`).replace(/^\[.*?\]\s*/, "").slice(0, 70);
       const style = `${prompt.slice(0, 900)}${prompt ? ", " : ""}${language}, ${tempo} BPM, ${gender} vocal`;
-      const body = { title, lyrics: lyrics.trim(), style, model: musicEngine === "mureka" ? modelMap[model] : musicEngine, musicEngine, n: 1, stream: true, gender, language, tempo, instrumental, reference_id: referenceId || undefined, vocal_id: vocalId || undefined };
-      const res = await fetch("/api/music", { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify(body) });
+      const body = { title, lyrics: lyrics.trim(), style, model: musicEngine === "mureka" ? modelMap[model] : musicEngine, musicEngine, n: 1, stream: true, gender, language, tempo, instrumental, reference_id: referenceId || undefined, vocal_id: vocalId || undefined, remix_upload_id: referenceRemixId || undefined };
+      const useMurekaStage2Remix = musicEngine === "mureka" && Boolean(referenceId);
+      const endpoint = useMurekaStage2Remix ? "/api/music/remix" : "/api/music";
+      const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Gagal membuat musik.");
       setNotice(data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.`);
       const library = await loadLibrary();
