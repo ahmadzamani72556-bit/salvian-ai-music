@@ -35,7 +35,7 @@ function cleanUrl(value: unknown): string | null {
 }
 
 function findAudio(value: unknown, depth = 0): string | null {
-  if (!value || depth > 10) return null;
+  if (!value || depth > 12) return null;
   if (typeof value === "string") return cleanUrl(value);
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -46,12 +46,15 @@ function findAudio(value: unknown, depth = 0): string | null {
   }
   if (typeof value !== "object") return null;
   const obj = value as Record<string, unknown>;
-  for (const key of ["audio_url", "audioUrl", "wav_url", "wavUrl", "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl"]) {
+  for (const key of [
+    "audio_url", "audioUrl", "wav_url", "wavUrl", "flac_url", "flacUrl", "mp3_url", "mp3Url",
+    "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "url",
+  ]) {
     const found = cleanUrl(obj[key]);
     if (found) return found;
   }
-  for (const key of ["audio", "songs", "clips", "choices", "outputs", "results", "data", "items", "tasks"]) {
-    if (obj[key]) {
+  for (const key of ["audio", "song", "songs", "clips", "choices", "outputs", "results", "result", "data", "items", "tasks", "task"]) {
+    if (obj[key] != null) {
       const found = findAudio(obj[key], depth + 1);
       if (found) return found;
     }
@@ -176,9 +179,6 @@ async function elevenCompose(body: Record<string, unknown>) {
   if (!ELEVEN_API_KEY) throw new Error("ELEVEN_API_KEY / ELEVENLABS_API_KEY belum tersedia di Vercel SALVIAN AI MUSIC.");
   const prompt = buildElevenPrompt(body);
   const durationMs = Math.min(Math.max(Number(body.durationMs || 180000), 3000), 600000);
-
-  // v2.5 supports composition plans, which give stronger section-level control.
-  // Generate the plan from the same free-form user concept, then compose from that plan.
   const planResponse = await fetch(`${ELEVEN_BASE_URL}/v1/music/plan`, {
     method: "POST",
     headers: { "xi-api-key": ELEVEN_API_KEY, "Content-Type": "application/json", Accept: "application/json" },
@@ -187,40 +187,18 @@ async function elevenCompose(body: Record<string, unknown>) {
   });
   const planData = await readJson(planResponse) as any;
   const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? planData : null;
-
-  const requestBody: Record<string, unknown> = {
-    model_id: "music_v2_5",
-    music_length_ms: durationMs,
-    force_instrumental: body.instrumental === true,
-    store_for_inpainting: false,
-  };
+  const requestBody: Record<string, unknown> = { model_id: "music_v2_5", music_length_ms: durationMs, force_instrumental: body.instrumental === true, store_for_inpainting: false };
   if (compositionPlan) {
-    compositionPlan.chunks = compositionPlan.chunks.map((chunk: any) => ({
-      ...chunk,
-      context_adherence: "high",
-    }));
-    // Audio references guide sound and production; they do not guarantee exact voice cloning.
+    compositionPlan.chunks = compositionPlan.chunks.map((chunk: any) => ({ ...chunk, context_adherence: "high" }));
     const conditioningIds = [body.reference_id, body.vocal_id].filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
     if (conditioningIds.length && compositionPlan.chunks.length) {
-      compositionPlan.chunks[0] = {
-        ...compositionPlan.chunks[0],
-        conditioning_ref: { song_id: String(conditioningIds[0]), range: { start_ms: 0, end_ms: 30000 } },
-        condition_strength: "high",
-      };
-      if (conditioningIds.length > 1 && compositionPlan.chunks.length > 1) {
-        compositionPlan.chunks[1] = {
-          ...compositionPlan.chunks[1],
-          conditioning_ref: { song_id: String(conditioningIds[1]), range: { start_ms: 0, end_ms: 30000 } },
-          condition_strength: "high",
-        };
-      }
+      compositionPlan.chunks[0] = { ...compositionPlan.chunks[0], conditioning_ref: { song_id: String(conditioningIds[0]), range: { start_ms: 0, end_ms: 30000 } }, condition_strength: "high" };
+      if (conditioningIds.length > 1 && compositionPlan.chunks.length > 1) compositionPlan.chunks[1] = { ...compositionPlan.chunks[1], conditioning_ref: { song_id: String(conditioningIds[1]), range: { start_ms: 0, end_ms: 30000 } }, condition_strength: "high" };
     }
     requestBody.composition_plan = compositionPlan;
   } else {
-    // Graceful fallback if the plan endpoint is temporarily unavailable.
     requestBody.prompt = prompt;
   }
-
   const response = await fetch(`${ELEVEN_BASE_URL}/v1/music?output_format=mp3_48000_192`, {
     method: "POST",
     headers: { "xi-api-key": ELEVEN_API_KEY, "Content-Type": "application/json", Accept: "audio/mpeg" },
@@ -233,13 +211,7 @@ async function elevenCompose(body: Record<string, unknown>) {
   }
   const audio = Buffer.from(await response.arrayBuffer()).toString("base64");
   const songId = response.headers.get("song-id") || `eleven-${crypto.randomUUID()}`;
-  return {
-    taskId: songId,
-    status: "completed",
-    audioBase64: audio,
-    contentType: response.headers.get("content-type")?.split(";")[0] || "audio/mpeg",
-    data: { song_id: songId, model: "music_v2_5", prompt, compositionPlan },
-  };
+  return { taskId: songId, status: "completed", audioBase64: audio, contentType: response.headers.get("content-type")?.split(";")[0] || "audio/mpeg", data: { song_id: songId, model: "music_v2_5", prompt, compositionPlan } };
 }
 
 async function sunoRequest(path: string, init: RequestInit = {}) {
@@ -278,7 +250,6 @@ export async function POST(request: NextRequest) {
       const taskId = String(body.taskId || body.task_id || body.id || "").trim();
       if (!taskId) return NextResponse.json({ success: false, error: "Task ID belum dikirim." }, { status: 400 });
       if (!(await ownsMusicTaskServer(userId, taskId))) return NextResponse.json({ success: false, error: "Task tidak ditemukan pada Library workspace ini." }, { status: 404 });
-
       if (engine === "mureka") {
         const q = await mureka(`/v1/song/query/${encodeURIComponent(taskId)}`);
         if (!q.response.ok) return NextResponse.json({ success: false, taskId, error: q.data?.error?.message || q.data?.message || `Mureka Query ${q.response.status}`, data: q.data }, { status: q.response.status });
@@ -290,16 +261,10 @@ export async function POST(request: NextRequest) {
         await updateMusicProjectServer(userId, taskId, normalizedStatus, audio, { musicEngine: engine, billingProvider: billingProvider(engine), providerData: q.data }).catch(error => console.error("MUSIC LIBRARY STATUS ERROR", error));
         return NextResponse.json({ success: true, taskId, musicEngine: engine, billingProvider: billingProvider(engine), status: normalizedStatus, providerStatus, audio, url: audio, finished, failed, data: q.data });
       }
-
       if (engine === "eleven_music_v2_5") {
         return NextResponse.json({ success: true, taskId, musicEngine: engine, billingProvider: billingProvider(engine), status: "completed", finished: true, failed: false, audio: `/api/music/audio?taskId=${encodeURIComponent(taskId)}&workspace=${encodeURIComponent(userId)}` });
       }
-
-      const q = await sunoRequest(SUNO_STATUS_PATH, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ song_ids: [taskId], model: "suno-v6" }),
-      });
+      const q = await sunoRequest(SUNO_STATUS_PATH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ song_ids: [taskId], model: "suno-v6" }) });
       if (!q.response.ok) return NextResponse.json({ success: false, taskId, error: `Suno Query ${q.response.status}`, data: q.data }, { status: q.response.status });
       const providerStatus = findStatus(q.data);
       const failed = failure(providerStatus);
@@ -331,69 +296,18 @@ export async function POST(request: NextRequest) {
       const hasVoice = typeof body.vocal_id === "string" && Boolean(body.vocal_id.trim());
       let generated: { response: Response; data: any };
       if (hasReference && hasVoice) {
-        generated = await sunoRequest("/api/music/voice-profile/cover", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "suno-v6",
-            voice_id: String(body.vocal_id),
-            song_clip_id: String(body.reference_id),
-            lyrics: lyrics.slice(0, 3000),
-            style_requirements: style || "Follow the reference music's rhythm, arrangement and production while singing the supplied original lyrics.",
-            title,
-            vocal_gender: gender,
-            audio_weight: 0.85,
-            max_mode: false,
-          }),
-        });
+        generated = await sunoRequest("/api/music/voice-profile/cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "suno-v6", voice_id: String(body.vocal_id), song_clip_id: String(body.reference_id), lyrics: lyrics.slice(0, 3000), style_requirements: style || "Follow the reference music's rhythm, arrangement and production while singing the supplied original lyrics.", title, vocal_gender: gender, audio_weight: 0.85, max_mode: false }) });
       } else if (hasVoice) {
-        generated = await sunoRequest("/api/music/voice-profile/cover", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "suno-v6",
-            voice_id: String(body.vocal_id),
-            lyrics: lyrics.slice(0, 3000),
-            style_requirements: style || "Create an original arrangement for the supplied lyrics using the selected voice profile.",
-            title,
-            vocal_gender: gender,
-            max_mode: false,
-          }),
-        });
+        generated = await sunoRequest("/api/music/voice-profile/cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "suno-v6", voice_id: String(body.vocal_id), lyrics: lyrics.slice(0, 3000), style_requirements: style || "Create an original arrangement for the supplied lyrics using the selected voice profile.", title, vocal_gender: gender, max_mode: false }) });
       } else if (hasReference) {
-        generated = await sunoRequest("/api/music/generate-from-source", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "suno-v6",
-            sourceClipId: String(body.reference_id),
-            prompt: lyrics.slice(0, 3000),
-            customMode: true,
-            style: style || "Preserve the reference track's broad rhythm, arrangement and production character",
-            title,
-            instrumental: body.instrumental === true,
-            vocalGender: gender,
-            audio_weight: 0.85,
-            waitAudio: false,
-          }),
-        });
+        generated = await sunoRequest("/api/music/generate-from-source", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "suno-v6", sourceClipId: String(body.reference_id), prompt: lyrics.slice(0, 3000), customMode: true, style: style || "Preserve the reference track's broad rhythm, arrangement and production character", title, instrumental: body.instrumental === true, vocalGender: gender, audio_weight: 0.85, waitAudio: false }) });
       } else {
-        const payload: ProviderData = {
-          model: "suno-v6",
-          lyrics: lyrics.slice(0, 3000),
-          style_tags: style || "pop, modern, emotional",
-          song_title: title,
-          instrumental: body.instrumental === true,
-        };
+        const payload: ProviderData = { model: "suno-v6", lyrics: lyrics.slice(0, 3000), style_tags: style || "pop, modern, emotional", song_title: title, instrumental: body.instrumental === true };
         if (!body.instrumental && ["male", "female", "m", "f"].includes(gender)) payload.vocal_gender = gender;
         if (typeof body.styleWeight === "number") payload.style_weight = Math.min(Math.max(body.styleWeight, 0), 1);
         if (typeof body.weirdness === "number") payload.weirdness_constraint = Math.min(Math.max(body.weirdness, 0), 1);
         if (Number.isInteger(body.variety)) payload.variety = Math.min(Math.max(Number(body.variety), 0), 4);
-        generated = await sunoRequest(SUNO_GENERATE_PATH, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
+        generated = await sunoRequest(SUNO_GENERATE_PATH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       }
       if (!generated.response.ok) return NextResponse.json({ success: false, error: generated.data?.message || generated.data?.error?.message || "Suno API " + generated.response.status, data: generated.data, musicEngine: engine }, { status: generated.response.status });
       const taskId = findTaskId(generated.data);
@@ -418,11 +332,10 @@ export async function POST(request: NextRequest) {
     if (body.reference_id) musicRequest.reference_id = String(body.reference_id);
     if (body.vocal_id) musicRequest.vocal_id = String(body.vocal_id);
     if (body.melody_id) musicRequest.melody_id = String(body.melody_id);
-
     const generated = await mureka("/v1/song/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(musicRequest) });
     if (!generated.response.ok) return NextResponse.json({ success: false, error: generated.data?.error?.message || generated.data?.message || generated.data?.error || `Mureka API ${generated.response.status}`, data: generated.data }, { status: generated.response.status });
     const taskId = findTaskId(generated.data);
-    if (!taskId) return NextResponse.json({ success: false, error: "Mureka menerima permintaan tetapi tidak mengembalikan Task ID.", data: generated.data }, { status: 502 });
+    if (!taskId) return NextResponse.json({ success: false, error: "Mureka menerima permintaan tetapi tidak mengembalikan Task ID." }, { status: 502 });
     const providerStatus = findStatus(generated.data);
     const finished = terminal(providerStatus);
     const failed = failure(providerStatus);
