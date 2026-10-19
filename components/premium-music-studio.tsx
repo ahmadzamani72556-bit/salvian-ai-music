@@ -44,7 +44,7 @@ export default function PremiumMusicStudio() {
   const [vocalId, setVocalId] = useState("");
   const [referenceName, setReferenceName] = useState("");
   const [vocalName, setVocalName] = useState("");
-  const [chatOpen, setChatOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   const [messages, setMessages] = useState<Chat[]>([welcome]);
@@ -58,6 +58,7 @@ export default function PremiumMusicStudio() {
 
   const loadLibrary = async (id = workspace) => { if (!id) return; const res = await fetch("/api/projects", { headers: headersFor(id), cache: "no-store" }); const data = await res.json().catch(() => ({})); if (res.ok) setProjects(Array.isArray(data.projects) ? data.projects : []); };
   useEffect(() => { const id = getWorkspaceId(); setWorkspace(id); void loadLibrary(id); }, []);
+  useEffect(() => { const openAssistant = () => setChatOpen(true); window.addEventListener("salvian-open-assistant", openAssistant); return () => window.removeEventListener("salvian-open-assistant", openAssistant); }, []);
   useEffect(() => { if (active === "library") void loadLibrary(); }, [active]);
 
   const uploadFile = async (file: File, purpose: "reference" | "voice") => {
@@ -96,7 +97,7 @@ export default function PremiumMusicStudio() {
   };
   const deleteProject = async (id: string) => { if (!workspace) return; const res = await fetch(`/api/projects?id=${encodeURIComponent(id)}`, { method: "DELETE", headers: headersFor(workspace) }); if (res.ok) { setProjects(prev => prev.filter(p => p.id !== id)); setNotice("Project dihapus dari Library Music."); } };
   const togglePlay = (url: string) => { if (playing === url) { audioRef.current?.pause(); setPlaying(null); return; } audioRef.current?.pause(); const audio = new Audio(url); audioRef.current = audio; setPlaying(url); audio.play().catch(() => setNotice("Audio tidak dapat diputar di perangkat ini.")); audio.onended = () => setPlaying(null); };
-  const nav = [["studio", "Studio Musik", Music2], ["assistant", "Asisten AI", Bot], ["library", "Library", Library], ["models", "Model AI", Sparkles], ["style", "Style & Genre", AudioLines], ["voice", "Voice & Vocal", Mic2], ["reference", "Audio Referensi", Headphones]] as const;
+  const nav = [["studio", "Buat Lagu", Music2], ["assistant", "Asisten AI", Bot], ["library", "Library", Library], ["models", "Model AI", Sparkles], ["style", "Style & Genre", AudioLines], ["voice", "Voice & Vocal", Mic2], ["reference", "Audio Referensi", Headphones]] as const;
   const modelCards: { id: Model; title: string; points: string[] }[] = [{ id: "Standard", title: "Cepat & Efisien", points: ["Kualitas baik", "Ide cepat", "Mureka auto"] }, { id: "Pro", title: "Kualitas Lebih Tinggi", points: ["Audio jernih", "Struktur detail", "Mureka 9"] }, { id: "Adroit", title: "Model Paling Elite", points: ["Aransemen kompleks", "Kualitas premium", "Mureka 9.5"] }];
   const selectedEngine = engineCards.find(e => e.id === musicEngine)!;
   const statusLabel = useMemo(() => polling ? `Mesin ${selectedEngine.title} sedang bekerja…` : notice, [polling, notice, selectedEngine.title]);
@@ -133,7 +134,7 @@ export default function PremiumMusicStudio() {
           {active === "library" && <section><div className="flex items-center justify-between"><div><h2 className="text-2xl font-black">Library Music</h2><p className="mt-1 text-sm text-zinc-500">Semua karya workspace Music ini.</p></div><button onClick={() => void loadLibrary()} className="rounded-xl border border-white/10 px-3 py-2 text-xs">Refresh</button></div><div className="mt-5 space-y-3">{projects.length === 0 ? <div className="rounded-3xl border border-dashed border-white/10 p-10 text-center text-sm text-zinc-600">Belum ada karya. Buat lagu pertama dari Studio Musik.</div> : projects.map(p => <div key={p.id} className="rounded-3xl border border-white/10 bg-white/[.03] p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div><h3 className="font-extrabold">{p.title}</h3><p className="mt-1 text-xs text-zinc-500">{p.model} • {p.status}</p></div><div className="flex gap-2">{p.audio && <button onClick={() => togglePlay(String(p.audio))} className="rounded-xl bg-violet-600 p-2">{playing === p.audio ? <Pause size={17}/> : <Play size={17}/>}</button>}{p.audio && <a href={p.audio} target="_blank" rel="noreferrer" className="rounded-xl border border-white/10 p-2"><Download size={17}/></a>}<button onClick={() => void deleteProject(p.id)} className="rounded-xl border border-red-400/20 px-3 py-2 text-xs text-red-300">Hapus</button></div></div><p className="mt-3 line-clamp-2 text-xs leading-5 text-zinc-600">{p.lyrics}</p></div>)}</div></section>}
         </div>
       </main>
-      {chatOpen && <section className="fixed inset-0 z-[100] flex h-[100dvh] min-h-0 w-screen flex-col overflow-hidden bg-[#05050c] text-white" role="dialog" aria-modal="true" aria-label="Asisten AI">
+      {chatOpen && <section className="fixed inset-0 z-[200] flex h-[100dvh] min-h-0 w-screen flex-col overflow-hidden bg-[#05050c] text-white" role="dialog" aria-modal="true" aria-label="Asisten AI">
         <header className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#080811] px-4 py-4 sm:px-7">
           <div className="flex items-center gap-3"><Bot size={22} className="text-violet-300"/><div><div className="text-base font-extrabold">Asisten AI</div><div className="text-[10px] text-zinc-500">Khusus SALVIAN AI MUSIC</div></div></div>
           <button type="button" onClick={() => setChatOpen(false)} className="flex items-center gap-2 rounded-xl border border-white/15 px-4 py-2 text-sm font-bold hover:bg-white/10"><X size={17}/> Kembali</button>
