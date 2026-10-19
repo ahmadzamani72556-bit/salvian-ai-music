@@ -22,9 +22,6 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
       if (Array.isArray(saved)) {
         const restored = saved.filter(item => item?.audio && item?.title);
         setSongs(restored);
-        // If the user returns to the app and previous songs still exist,
-        // reopen the results screen so there is always a clear path back
-        // to the persistent music history. Songs are never removed here.
         if (restored.length > 0) setPhase("result");
       }
     } catch {
@@ -179,9 +176,14 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
     };
   }, [title]);
 
+  // Navigation between the two screens must not delete history or cancel an active generation.
+  const showStudio = () => setPhase("idle");
+  const showResults = () => setPhase("result");
+
   const reset = () => {
-    generationRef.current += 1;
-    setPhase("idle");
+    // Back to Studio only changes the visible screen. It intentionally does not
+    // increment generationRef, so an active music task can continue in the background.
+    showStudio();
     setError("");
   };
 
@@ -214,10 +216,41 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
   return (
     <>
       {children}
+
+      {/* Screen 1 navigation: visible only when the studio is active. */}
+      {phase === "idle" && songs.length > 0 && (
+        <button
+          type="button"
+          onClick={showResults}
+          className="fixed bottom-5 right-5 z-[90] inline-flex items-center gap-2 rounded-2xl border border-violet-300/20 bg-[#0b0b16]/95 px-4 py-3 text-sm font-bold text-white shadow-2xl shadow-violet-950/30 backdrop-blur-xl hover:bg-violet-600/20"
+        >
+          <Music2 size={17} className="text-violet-300" />
+          Layar 2 · Hasil Lagu ({songs.length})
+        </button>
+      )}
+
       {phase !== "idle" && (
         <div className="fixed inset-0 z-[100] min-h-[100dvh] w-screen overflow-y-auto bg-[#02030a] text-white">
           <div className="flex min-h-[100dvh] w-full items-start justify-center p-4 sm:p-8">
             <section className="w-full max-w-3xl rounded-[28px] border border-white/10 bg-[#080912]/95 p-5 shadow-2xl shadow-violet-950/30 backdrop-blur-xl sm:p-8">
+              {/* Persistent screen switcher: Screen 1 and Screen 2 are always reachable. */}
+              <div className="mb-6 flex w-full items-center justify-center rounded-2xl border border-white/10 bg-black/20 p-1">
+                <button
+                  type="button"
+                  onClick={showStudio}
+                  className="flex-1 rounded-xl px-4 py-2.5 text-sm font-bold text-zinc-300 hover:bg-white/5 hover:text-white"
+                >
+                  Layar 1 · Studio
+                </button>
+                <button
+                  type="button"
+                  onClick={showResults}
+                  className="flex-1 rounded-xl bg-violet-600/20 px-4 py-2.5 text-sm font-bold text-violet-200 ring-1 ring-violet-400/20"
+                >
+                  Layar 2 · Hasil ({songs.length})
+                </button>
+              </div>
+
               {phase === "loading" && (
                 <div className="text-center">
                   <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-violet-600/15 ring-1 ring-violet-400/20">
