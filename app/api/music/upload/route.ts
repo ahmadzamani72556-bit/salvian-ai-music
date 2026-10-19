@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { put } from "@vercel/blob";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -63,6 +64,7 @@ export async function POST(request: NextRequest) {
     const requestedPurpose = String(form.get("purpose") || "reference").toLowerCase();
     const engine = String(form.get("engine") || "mureka").toLowerCase();
     const purpose = requestedPurpose === "voice" ? "voice" : "reference";
+    const workspace = request.headers.get("x-music-workspace")?.trim();
     if (!(file instanceof File)) return NextResponse.json({ success: false, error: "File audio belum dipilih." }, { status: 400 });
     if (file.size > 10 * 1024 * 1024) return NextResponse.json({ success: false, error: "Ukuran file maksimal 10 MB." }, { status: 413 });
     const name = file.name.toLowerCase();
@@ -77,7 +79,31 @@ export async function POST(request: NextRequest) {
     else return NextResponse.json({ success: false, error: "Mesin musik tidak dikenal." }, { status: 400 });
     if (!result.id || typeof result.id !== "string") throw new Error("Mesin musik tidak mengembalikan ID audio yang dapat digunakan.");
 
-    return NextResponse.json({ success: true, id: result.id, ...(purpose === "voice" ? { vocal_id: result.id } : {}), purpose, engine, data: result.data });
+    // Stage 1 keeps using the Mureka reference ID. Stage 2 also needs the
+    // original, full-duration bytes because Mureka's reference purpose trims
+    // audio to 30 seconds. Keep a private copy keyed by the Mureka file ID.
+    // This does not alter the Stage-1 Mureka reference flow.
+    let stage2Reference = false;
+    if (engine === "mureka" && purpose === "reference" && workspace) {
+      const safeWorkspace = workspace.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const pathname = `music-stage2-references/${safeWorkspace}/${result.id}`;
+      try {
+        await put(pathname, file, { access: "private", addRandomSuffix: false });
+        stage2Reference = true;
+      } catch (blobError) {
+        console.error("SALVIAN Stage-2 reference Blob save error", blobError);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      id: result.id,
+      ...(purpose === "voice" ? { vocal_id: result.id } : {}),
+      purpose,
+      engine,
+      stage2Reference,
+      data: result.data,
+    });
   } catch (error) {
     console.error("SALVIAN MUSIC upload error", error);
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Upload audio gagal." }, { status: 500 });
