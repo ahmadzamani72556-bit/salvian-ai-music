@@ -46,11 +46,7 @@ button { cursor: pointer; }
   color: transparent;
 }
 
-[data-premium-studio] aside:first-of-type > div:first-child > div:first-child {
-  background-image: url('/salvian-logo.svg');
-  background-size: cover;
-  background-position: center;
-  box-shadow: 0 0 35px rgba(168, 85, 247, 0.5);
+/* Music Studio: permanently hide the legacy SALVIAN AI logo artwork. */
+[data-premium-studio] img[src="/salvian-ai-logo.svg"] {
+  display: none !important;
 }
-
-[data-premium-studio] aside:first-of-type > div:first-child > div:first-child > svg { display: none; }
