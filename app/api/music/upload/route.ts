@@ -109,18 +109,16 @@ export async function POST(request: NextRequest) {
         result = await murekaUpload(file, "remix");
         stage2RemixId = result.id;
       } else {
-        // Preserve both established paths: BOP/reference and full-duration Remix.
-        // They are independent. A reference failure must never throw away a valid
-        // Remix upload, because the 10–350 second Remix path is the continuation
-        // used by the full-reference Stage-2 workflow.
+        // Keep BOP/reference and full-duration Remix as two independent paths.
+        // A failure of the BOP/reference upload must NOT discard a valid Remix
+        // upload. This is essential for full songs using the 10–350 second path.
         const [referenceResult, remixResult] = await Promise.allSettled([
           murekaUpload(file, "reference"),
           murekaUpload(file, "remix"),
         ]);
 
         if (remixResult.status === "rejected") {
-          const reason = remixResult.reason instanceof Error ? remixResult.reason.message : "Upload Remix penuh gagal.";
-          throw new Error(reason);
+          throw new Error(remixResult.reason instanceof Error ? remixResult.reason.message : "Upload Remix penuh gagal.");
         }
 
         stage2RemixId = remixResult.value.id;
@@ -159,6 +157,7 @@ export async function POST(request: NextRequest) {
       warning: referenceWarning || null,
       data: result.data,
     });
+
     if (stage2RemixId && engine === "mureka" && (purpose === "reference" || purpose === "remix")) {
       response.cookies.set("salvian_stage2_pending", "1", stage2CookieOptions("/api/music"));
       response.cookies.set("salvian_stage2_remix_id", stage2RemixId, stage2CookieOptions("/api/music"));
