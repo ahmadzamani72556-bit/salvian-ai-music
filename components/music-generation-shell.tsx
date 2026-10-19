@@ -1,14 +1,18 @@
 "use client";
 
 import { ReactNode, useEffect, useState } from "react";
-import { CheckCircle2, Download, Music2, Play, Save, Trash2, X } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Download, Headphones, LoaderCircle, Music2, Play, Save, Trash2 } from "lucide-react";
 
 type Project = {
   id: string;
   title?: string;
+  lyrics?: string;
+  style?: string;
+  model?: string;
   status?: string;
   audio?: string | null;
   task_id?: string | null;
+  created_at?: string;
 };
 
 type GenerationDetail = {
@@ -17,190 +21,235 @@ type GenerationDetail = {
   failed?: boolean;
 };
 
+type Phase = "studio" | "results";
+
 function getWorkspaceId() {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem("salvian_music_workspace") || "";
 }
 
 export default function MusicGenerationShell({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+  const [phase, setPhase] = useState<Phase>("studio");
+  const [projects, setProjects] = useState<Project[]>([]);
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState("Menyiapkan mesin musik…");
-  const [finished, setFinished] = useState(false);
+  const [status, setStatus] = useState("Hasil dan proses pembuatan lagu akan tampil di halaman ini.");
+  const [generating, setGenerating] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [latest, setLatest] = useState<Project | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [savedIds, setSavedIds] = useState<Record<string, boolean>>({});
 
-  const loadLatest = async () => {
+  const loadProjects = async () => {
     const workspace = getWorkspaceId();
     if (!workspace) return;
     try {
-      const res = await fetch("/api/projects", {
-        headers: { "X-Music-Workspace": workspace },
-        cache: "no-store",
-      });
+      const res = await fetch("/api/projects", { headers: { "X-Music-Workspace": workspace }, cache: "no-store" });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !Array.isArray(data.projects) || !data.projects.length) return;
-      const project = data.projects[0] as Project;
-      setLatest(project);
-      const key = `salvian_music_saved_${project.id}`;
-      setSaved(window.localStorage.getItem(key) === "1");
+      if (!res.ok || !Array.isArray(data.projects)) return;
+      const next = data.projects as Project[];
+      setProjects(next);
+      const saved: Record<string, boolean> = {};
+      next.forEach(project => {
+        saved[project.id] = window.localStorage.getItem(`salvian_music_saved_${project.id}`) === "1";
+      });
+      setSavedIds(saved);
     } catch {
-      // The Studio itself remains usable if the result refresh is temporarily unavailable.
+      // Keep the result screen usable if the refresh is temporarily unavailable.
     }
   };
 
   useEffect(() => {
-    const openResults = (event: Event) => {
-      const detail = (event as CustomEvent<GenerationDetail>).detail;
-      if (!detail?.generating) return;
-
-      setOpen(true);
-      setFinished(false);
-      setFailed(false);
-      setLatest(null);
-      setSaved(false);
-      setProgress(value => Math.max(value, 8));
-      setStatus(detail.status || "Permintaan diterima. Mesin sedang menyiapkan lagu…");
-
-      window.setTimeout(() => {
-        const buttons = Array.from(document.querySelectorAll("button"));
-        const resultsButton = buttons.find((button) =>
-          button.textContent?.replace(/\s+/g, " ").trim().includes("Hasil Lagu & Proses")
-        );
-        resultsButton?.click();
-      }, 0);
+    const onResults = (event: Event) => {
+      const detail = (event as CustomEvent<{ projects?: Project[] }>).detail;
+      if (!Array.isArray(detail?.projects)) return;
+      setProjects(detail.projects);
     };
 
-    const updateStatus = (event: Event) => {
+    const onStatus = (event: Event) => {
       const detail = (event as CustomEvent<GenerationDetail>).detail;
       if (!detail) return;
-      setOpen(true);
-      if (detail.status) setStatus(detail.status);
+      if (typeof detail.status === "string") setStatus(detail.status);
+
       if (detail.generating) {
-        setFinished(false);
+        setPhase("results");
+        setGenerating(true);
         setFailed(Boolean(detail.failed));
-        setProgress(value => Math.max(value, 10));
+        setProgress(value => Math.max(value, 8));
         return;
       }
-      setFinished(true);
+
+      setPhase("results");
+      setGenerating(false);
       setFailed(Boolean(detail.failed));
-      setProgress(detail.failed ? 100 : 100);
-      void loadLatest();
+      setProgress(100);
+      void loadProjects();
     };
 
-    window.addEventListener("salvian-music-generation-status", openResults);
-    window.addEventListener("salvian-music-generation-status", updateStatus);
+    const onShowResults = () => {
+      setPhase("results");
+      void loadProjects();
+    };
+    const onShowStudio = () => setPhase("studio");
+    const onRefresh = () => void loadProjects();
+
+    window.addEventListener("salvian-music-results-update", onResults);
+    window.addEventListener("salvian-music-generation-status", onStatus);
+    window.addEventListener("salvian-music-show-results", onShowResults);
+    window.addEventListener("salvian-music-show-studio", onShowStudio);
+    window.addEventListener("salvian-music-refresh-library", onRefresh);
     return () => {
-      window.removeEventListener("salvian-music-generation-status", openResults);
-      window.removeEventListener("salvian-music-generation-status", updateStatus);
+      window.removeEventListener("salvian-music-results-update", onResults);
+      window.removeEventListener("salvian-music-generation-status", onStatus);
+      window.removeEventListener("salvian-music-show-results", onShowResults);
+      window.removeEventListener("salvian-music-show-studio", onShowStudio);
+      window.removeEventListener("salvian-music-refresh-library", onRefresh);
     };
   }, []);
 
   useEffect(() => {
-    if (!open || finished) return;
+    if (!generating) return;
     const started = Date.now();
     const timer = window.setInterval(() => {
       const elapsed = (Date.now() - started) / 1000;
-      // Visual progress only: it approaches 94% until the provider confirms completion.
-      const visual = Math.min(94, 12 + elapsed * 2.2);
-      setProgress(value => Math.max(value, Math.round(visual)));
+      // Visual progress only; the provider status remains authoritative.
+      setProgress(value => Math.max(value, Math.min(94, Math.round(12 + elapsed * 2.8))));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [open, finished]);
+  }, [generating]);
 
-  const deleteLatest = async () => {
-    if (!latest?.id) return;
+  useEffect(() => {
+    if (phase === "results") void loadProjects();
+  }, [phase]);
+
+  const showStudio = () => {
+    setPhase("studio");
+    window.dispatchEvent(new CustomEvent("salvian-music-show-studio"));
+  };
+
+  const saveProject = (id: string) => {
+    window.localStorage.setItem(`salvian_music_saved_${id}`, "1");
+    setSavedIds(prev => ({ ...prev, [id]: true }));
+  };
+
+  const deleteProject = async (id: string) => {
     const workspace = getWorkspaceId();
     if (!workspace) return;
     try {
-      const res = await fetch(`/api/projects?id=${encodeURIComponent(latest.id)}`, {
+      const res = await fetch(`/api/projects?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: { "X-Music-Workspace": workspace },
       });
       if (!res.ok) throw new Error();
-      setLatest(null);
-      setSaved(false);
-      setStatus("Hasil lagu dihapus dari Library Music.");
-      setFinished(true);
-      setProgress(100);
+      setProjects(prev => prev.filter(project => project.id !== id));
+      setSavedIds(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      window.localStorage.removeItem(`salvian_music_saved_${id}`);
+      setStatus("Hasil lagu berhasil dihapus dari Library Music.");
     } catch {
       setStatus("Hasil lagu gagal dihapus. Coba lagi.");
     }
   };
 
-  const saveLatest = () => {
-    if (!latest?.id) return;
-    window.localStorage.setItem(`salvian_music_saved_${latest.id}`, "1");
-    setSaved(true);
-    setStatus("Hasil lagu ditandai tersimpan di perangkat ini.");
-  };
-
   return (
     <>
       {children}
-      {open && (
-        <section
-          aria-label="Proses pembuatan lagu"
-          className="fixed inset-x-3 bottom-[88px] z-[120] mx-auto w-full max-w-2xl overflow-hidden rounded-3xl border border-violet-400/25 bg-[#0b0715]/95 p-4 shadow-2xl shadow-violet-950/40 backdrop-blur-2xl sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[520px]"
-        >
-          <div className="flex items-start gap-3">
-            <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${finished ? "bg-emerald-500/15" : "bg-violet-500/15"}`}>
-              {finished ? <CheckCircle2 className="text-emerald-300" size={23} /> : <Music2 className="animate-pulse text-violet-300" size={23} />}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-start justify-between gap-2">
+
+      {phase === "results" && (
+        <div className="fixed inset-0 z-[110] min-h-[100dvh] w-screen overflow-y-auto bg-[#02030a] text-white">
+          <div className="mx-auto min-h-[100dvh] w-full max-w-3xl px-4 pb-10 pt-6 sm:px-8 sm:pt-8">
+            <section className="rounded-[30px] border border-white/10 bg-[#080912]/96 p-5 shadow-2xl shadow-violet-950/30 sm:p-8">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="font-black">{finished ? (failed ? "Pembuatan lagu gagal" : "Pembuatan lagu selesai") : "Pembuatan musik"}</p>
-                  <p className="mt-0.5 text-xs text-zinc-500">SALVIAN AI MUSIC · Layar 2</p>
+                  <p className="text-xs font-bold uppercase tracking-[.28em] text-violet-300">Music Creator · Layar 2</p>
+                  <h1 className="mt-2 text-3xl font-black tracking-tight">Hasil Lagu &amp; Proses</h1>
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-zinc-400">Pantau proses pembuatan lagu dan putar hasil yang sudah tersimpan di Library Music.</p>
                 </div>
-                <button type="button" onClick={() => setOpen(false)} aria-label="Tutup kartu proses" className="rounded-xl p-2 text-zinc-500 hover:bg-white/5 hover:text-white">
-                  <X size={17} />
+                <Headphones size={30} className="mt-1 shrink-0 text-violet-300" />
+              </div>
+
+              <div className="mt-6 flex rounded-2xl border border-white/10 bg-black/20 p-1">
+                <button type="button" onClick={showStudio} className="flex-1 rounded-xl px-3 py-3 text-sm font-bold text-zinc-300 transition hover:bg-white/5 hover:text-white">
+                  <ArrowLeft size={16} className="mr-2 inline" />Layar 1 · Studio
                 </button>
-              </div>
-              <p className="mt-2 break-words text-sm leading-5 text-zinc-300">{status}</p>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="mb-2 flex items-center justify-between text-[11px] text-zinc-500">
-              <span>{finished ? "SELESAI" : "PROSES MESIN"}</span>
-              <span>{progress}%</span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-gradient-to-r from-violet-500 via-fuchsia-500 to-violet-300 transition-[width] duration-700" style={{ width: `${progress}%` }} />
-            </div>
-          </div>
-
-          {!finished && <p className="mt-3 text-[11px] text-zinc-600">Proses dipantau otomatis. Kartu ini akan berubah ketika mesin mengembalikan hasil lagu.</p>}
-
-          {finished && !failed && latest && (
-            <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-600/15"><Music2 size={18} className="text-violet-300" /></div>
-                <div className="min-w-0 flex-1">
-                  <p className="break-words font-bold">{latest.title || "Salvian AI Song"}</p>
-                  <p className="mt-1 text-xs text-zinc-500">{latest.status || "succeeded"} · tersimpan di Library</p>
+                <div className="flex-1 rounded-xl bg-violet-600/20 px-3 py-3 text-center text-sm font-bold text-violet-200 ring-1 ring-violet-400/20">
+                  Layar 2 · Hasil ({projects.length})
                 </div>
               </div>
-              {latest.audio ? (
-                <>
-                  <audio controls preload="metadata" src={latest.audio} className="mt-3 w-full" />
-                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <a href={latest.audio} download className="flex items-center justify-center gap-1 rounded-xl border border-white/10 px-3 py-2 text-xs font-bold hover:bg-white/5"><Download size={14} /> Download</a>
-                    <button type="button" onClick={() => { const audio = new Audio(latest.audio!); void audio.play(); }} className="flex items-center justify-center gap-1 rounded-xl bg-violet-600 px-3 py-2 text-xs font-bold"><Play size={14} /> Putar</button>
-                    <button type="button" onClick={saveLatest} className={`flex items-center justify-center gap-1 rounded-xl border px-3 py-2 text-xs font-bold ${saved ? "border-emerald-400/30 text-emerald-300" : "border-white/10 hover:bg-white/5"}`}><Save size={14} /> {saved ? "Tersimpan" : "Simpan"}</button>
-                    <button type="button" onClick={() => void deleteLatest()} className="flex items-center justify-center gap-1 rounded-xl border border-red-400/20 px-3 py-2 text-xs font-bold text-red-300 hover:bg-red-500/10"><Trash2 size={14} /> Hapus</button>
-                  </div>
-                </>
-              ) : (
-                <p className="mt-3 rounded-xl bg-white/[.03] px-3 py-2 text-xs text-amber-200/80">Mesin selesai, tetapi URL audio belum diterima. Refresh Hasil Lagu & Proses untuk mengambil hasil terbaru.</p>
-              )}
-            </div>
-          )}
 
-          {finished && !failed && !latest && <p className="mt-3 rounded-xl bg-white/[.03] px-3 py-2 text-xs text-zinc-400">Lagu selesai. Sedang mengambil hasil dari Library…</p>}
-        </section>
+              <div className={`mt-6 rounded-3xl border p-5 ${failed ? "border-red-400/25 bg-red-500/5" : generating ? "border-violet-400/25 bg-violet-500/10" : "border-white/10 bg-white/[.03]"}`}>
+                <div className="flex items-start gap-3">
+                  {generating ? <LoaderCircle size={23} className="mt-0.5 shrink-0 animate-spin text-violet-300" /> : failed ? <Music2 size={23} className="mt-0.5 shrink-0 text-red-300" /> : <CheckCircle2 size={23} className="mt-0.5 shrink-0 text-emerald-300" />}
+                  <div className="min-w-0 flex-1">
+                    <p className="font-black">{generating ? "Pembuatan musik sedang berlangsung" : failed ? "Pembuatan lagu gagal" : "Lagu berhasil dibuat"}</p>
+                    <p className="mt-1 break-words text-sm leading-6 text-zinc-300">{status}</p>
+                  </div>
+                  <span className="shrink-0 text-sm font-black text-violet-200">{progress}%</span>
+                </div>
+                <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/10">
+                  <div className="h-full rounded-full bg-gradient-to-r from-violet-600 via-fuchsia-500 to-violet-300 transition-[width] duration-700" style={{ width: `${progress}%` }} />
+                </div>
+                <div className="mt-2 flex justify-between text-[10px] font-bold uppercase tracking-[.15em] text-zinc-600">
+                  <span>{generating ? "Memproses audio" : "Proses selesai"}</span>
+                  <span>Salvian AI Music</span>
+                </div>
+              </div>
+
+              <div className="mt-7 flex items-end justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[.22em] text-violet-300">Hasil Lagu</p>
+                  <h2 className="mt-1 text-2xl font-black">Tersimpan</h2>
+                </div>
+                <button type="button" onClick={() => void loadProjects()} className="rounded-xl border border-white/10 px-3 py-2 text-xs font-bold text-zinc-300 hover:bg-white/5">Refresh</button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                {projects.length === 0 ? (
+                  <div className="rounded-3xl border border-dashed border-white/10 p-8 text-center">
+                    <Music2 size={30} className="mx-auto text-zinc-600" />
+                    <p className="mt-3 font-semibold text-zinc-300">Belum ada hasil lagu.</p>
+                    <p className="mt-1 text-xs leading-5 text-zinc-500">Buat musik dari Layar 1. Hasilnya akan otomatis muncul di halaman ini.</p>
+                  </div>
+                ) : projects.map(project => {
+                  const saved = Boolean(savedIds[project.id]);
+                  return (
+                    <article key={project.id} className="rounded-[28px] border border-white/10 bg-black/20 p-4 sm:p-5">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-violet-600/15 ring-1 ring-violet-400/20"><Music2 size={25} className="text-violet-300" /></div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[.16em] text-violet-200">SALVIAN AI</span>
+                            <span className="text-xs font-bold uppercase tracking-[.16em] text-violet-300">{project.model || "ELITE"}</span>
+                          </div>
+                          <h3 className="mt-2 break-words text-xl font-black">{project.title || "Hasil Musik AI"}</h3>
+                          <p className="mt-1 break-words text-sm text-zinc-500">Mode: {project.model || "Elite"} · {project.status || "succeeded"}</p>
+                        </div>
+                        <button type="button" onClick={() => void deleteProject(project.id)} aria-label="Hapus hasil lagu" className="rounded-xl p-2 text-zinc-500 hover:bg-red-500/10 hover:text-red-300"><Trash2 size={21} /></button>
+                      </div>
+
+                      {project.audio ? (
+                        <>
+                          <audio controls preload="metadata" src={project.audio} className="mt-5 w-full" />
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button type="button" onClick={() => { const audio = new Audio(project.audio!); void audio.play(); }} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-black hover:bg-violet-500"><Play size={17} /> Putar Lagu</button>
+                            <a href={project.audio} download className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm font-black hover:bg-white/5"><Download size={17} /> Download</a>
+                            <button type="button" onClick={() => saveProject(project.id)} className={`inline-flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-black ${saved ? "border-emerald-400/30 text-emerald-300" : "border-white/10 hover:bg-white/5"}`}><Save size={17} /> {saved ? "Tersimpan" : "Simpan Hasil"}</button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="mt-4 rounded-2xl bg-white/[.03] px-4 py-3 text-sm text-zinc-500">
+                          {project.task_id ? "Proses masih berjalan. Audio akan muncul setelah mesin selesai." : "Audio belum tersedia untuk karya ini."}
+                        </div>
+                      )}
+
+                      {project.lyrics && <p className="mt-4 line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-zinc-500">{project.lyrics}</p>}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+        </div>
       )}
     </>
   );
