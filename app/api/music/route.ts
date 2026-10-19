@@ -48,7 +48,8 @@ function findAudio(value: unknown, depth = 0): string | null {
   const obj = value as Record<string, unknown>;
   for (const key of [
     "audio_url", "audioUrl", "wav_url", "wavUrl", "flac_url", "flacUrl", "mp3_url", "mp3Url",
-    "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl", "url",
+    "song_url", "songUrl", "music_url", "musicUrl", "output_url", "outputUrl", "download_url", "downloadUrl",
+    "stream_url", "streamUrl", "play_url", "playUrl", "url",
   ]) {
     const found = cleanUrl(obj[key]);
     if (found) return found;
@@ -251,13 +252,24 @@ export async function POST(request: NextRequest) {
       if (!taskId) return NextResponse.json({ success: false, error: "Task ID belum dikirim." }, { status: 400 });
       if (!(await ownsMusicTaskServer(userId, taskId))) return NextResponse.json({ success: false, error: "Task tidak ditemukan pada Library workspace ini." }, { status: 404 });
       if (engine === "mureka") {
-        const q = await mureka(`/v1/song/query/${encodeURIComponent(taskId)}`);
+        let q = await mureka(`/v1/song/query/${encodeURIComponent(taskId)}`);
         if (!q.response.ok) return NextResponse.json({ success: false, taskId, error: q.data?.error?.message || q.data?.message || `Mureka Query ${q.response.status}`, data: q.data }, { status: q.response.status });
-        const providerStatus = findStatus(q.data);
+        let providerStatus = findStatus(q.data);
         const failed = failure(providerStatus);
-        const audio = failed ? null : findAudio(q.data);
-        const finished = terminal(providerStatus) || Boolean(audio);
-        const normalizedStatus = finished && audio ? "succeeded" : providerStatus;
+        let audio = failed ? null : findAudio(q.data);
+        // Mureka can briefly report `succeeded` before the choices/audio URL is
+        // available in the query response. Do not close the task early in that case.
+        if (!failed && providerStatus === "succeeded" && !audio) {
+          await new Promise(resolve => setTimeout(resolve, 800));
+          const retry = await mureka(`/v1/song/query/${encodeURIComponent(taskId)}`);
+          if (retry.response.ok) {
+            q = retry;
+            providerStatus = findStatus(q.data);
+            audio = failure(providerStatus) ? null : findAudio(q.data);
+          }
+        }
+        const finished = failed || Boolean(audio);
+        const normalizedStatus = failed ? providerStatus : audio ? "succeeded" : providerStatus === "succeeded" ? "finalizing_audio" : providerStatus;
         await updateMusicProjectServer(userId, taskId, normalizedStatus, audio, { musicEngine: engine, billingProvider: billingProvider(engine), providerData: q.data }).catch(error => console.error("MUSIC LIBRARY STATUS ERROR", error));
         return NextResponse.json({ success: true, taskId, musicEngine: engine, billingProvider: billingProvider(engine), status: normalizedStatus, providerStatus, audio, url: audio, finished, failed, data: q.data });
       }
@@ -337,7 +349,7 @@ export async function POST(request: NextRequest) {
     const taskId = findTaskId(generated.data);
     if (!taskId) return NextResponse.json({ success: false, error: "Mureka menerima permintaan tetapi tidak mengembalikan Task ID." }, { status: 502 });
     const providerStatus = findStatus(generated.data);
-    const finished = terminal(providerStatus);
+    const finished = failure(providerStatus) || Boolean(findAudio(generated.data));
     const failed = failure(providerStatus);
     const audio = finished && !failed ? findAudio(generated.data) : null;
     const saved = await saveProject(userId, { title, lyrics, style, model, musicEngine: engine, taskId, status: providerStatus, audioUrl: audio, providerData: { musicEngine: engine, billingProvider: billingProvider(engine), data: generated.data } });
