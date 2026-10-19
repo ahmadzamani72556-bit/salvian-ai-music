@@ -75,35 +75,50 @@ button { cursor: pointer; }
   line-height: 1.5 !important;
 }
 
-/* Mobile Studio navigation: preserve all four original actions and fit the entire bar to the phone viewport. */
+/* Mobile Studio navigation: preserve all four original actions and fit the actual inner row to the phone viewport. */
 @media (max-width: 1023px) {
+  html,
+  body {
+    overflow-x: hidden !important;
+  }
+
   nav[aria-label="Navigasi Studio Musik"] {
     position: fixed !important;
     left: 0 !important;
     right: 0 !important;
     bottom: 0 !important;
     top: auto !important;
-    display: grid !important;
-    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
     width: 100% !important;
     max-width: 100vw !important;
     min-width: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
-    gap: 0 !important;
     overflow: hidden !important;
     transform: none !important;
     box-sizing: border-box !important;
   }
 
-  nav[aria-label="Navigasi Studio Musik"] > button {
+  nav[aria-label="Navigasi Studio Musik"] > div {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 8px 2px !important;
+    gap: 0 !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+
+  nav[aria-label="Navigasi Studio Musik"] > div > button {
     display: flex !important;
-    flex: none !important;
     width: 100% !important;
     min-width: 0 !important;
     max-width: 100% !important;
+    flex: none !important;
     margin: 0 !important;
-    padding: 8px 2px !important;
+    padding: 8px 1px !important;
     white-space: normal !important;
     text-align: center !important;
     align-items: center !important;
@@ -112,7 +127,7 @@ button { cursor: pointer; }
     box-sizing: border-box !important;
   }
 
-  nav[aria-label="Navigasi Studio Musik"] > button > span {
+  nav[aria-label="Navigasi Studio Musik"] > div > button > span {
     display: block !important;
     width: 100% !important;
     min-width: 0 !important;
