@@ -114,10 +114,13 @@ export async function POST(request: NextRequest) {
       referenceId = uploaded.id;
     }
 
-    // Use the highest currently supported regular Mureka model by default.
-    // It supports reference_id + vocal_id together, which is the required
-    // control combination for this Studio flow.
-    const modelRaw = text(body.model) || "mureka-9.5";
+    // Reference generation needs the strongest regular Mureka model so the
+    // music reference, lyrics and optional cloned vocal are balanced together.
+    // Keep the explicit model for text-only generations, but force 9.5 when a
+    // reference is present because the Studio reference path is the quality-
+    // critical path being fixed here.
+    const requestedModel = text(body.model) || "mureka-9.5";
+    const modelRaw = referenceId ? "mureka-9.5" : requestedModel;
     const model = ["auto", "mureka-7.6", "mureka-o2", "mureka-8", "mureka-9", "mureka-9.5"].includes(modelRaw) ? modelRaw : "mureka-9.5";
     if (model === "mureka-o2" && vocalId) {
       return clearStage2Cookies(NextResponse.json({ success: false, error: "Model Mureka O2 tidak mendukung Voice & Vocal. Pilih Pro atau Adroit untuk Voice & Vocal." }, { status: 400 }));
@@ -183,7 +186,7 @@ export async function POST(request: NextRequest) {
       status,
       librarySaved: true,
       note: referenceId
-        ? "Audio Referensi dipakai sebagai reference_id; lirik tetap dikirim sebagai sumber kata; Voice & Vocal dikirim sebagai vocal_id bila tersedia."
+        ? "Audio Referensi dipakai sebagai reference_id; lirik tetap dikirim sebagai sumber kata; Voice & Vocal dikirim sebagai vocal_id bila tersedia; reference path menggunakan Mureka 9.5."
         : "Lagu dibuat melalui song/generate dengan lirik dan konsep pengguna.",
       provider: providerData,
     }));
