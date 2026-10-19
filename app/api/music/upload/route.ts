@@ -99,6 +99,8 @@ export async function POST(request: NextRequest) {
 
     let result: { id: string; data: unknown };
     let stage2RemixId = "";
+    let referenceId = "";
+    let referenceWarning = "";
 
     if (engine === "mureka") {
       if (purpose === "voice") {
@@ -107,28 +109,56 @@ export async function POST(request: NextRequest) {
         result = await murekaUpload(file, "remix");
         stage2RemixId = result.id;
       } else {
-        // Preserve the established BOP/reference path AND the full Remix path.
-        // Both uploads are independent and run concurrently so the existing
-        // workflow remains intact without doubling the mobile wait time.
-        const [referenceResult, remixResult] = await Promise.all([
+        // Preserve both established paths: BOP/reference and full-duration Remix.
+        // They are independent. A reference failure must never throw away a valid
+        // Remix upload, because the 10–350 second Remix path is the continuation
+        // used by the full-reference Stage-2 workflow.
+        const [referenceResult, remixResult] = await Promise.allSettled([
           murekaUpload(file, "reference"),
           murekaUpload(file, "remix"),
         ]);
-        result = referenceResult;
-        stage2RemixId = remixResult.id;
+
+        if (remixResult.status === "rejected") {
+          const reason = remixResult.reason instanceof Error ? remixResult.reason.message : "Upload Remix penuh gagal.";
+          throw new Error(reason);
+        }
+
+        stage2RemixId = remixResult.value.id;
+        result = remixResult.value;
+
+        if (referenceResult.status === "fulfilled") {
+          referenceId = referenceResult.value.id;
+        } else {
+          referenceWarning = referenceResult.reason instanceof Error
+            ? referenceResult.reason.message
+            : "Upload BOP/reference gagal, tetapi upload Remix penuh berhasil.";
+        }
       }
     } else if (engine === "eleven_music_v2_5") {
       result = await elevenUpload(file);
+      referenceId = result.id;
     } else if (engine === "suno_v6") {
       if (purpose === "remix") return NextResponse.json({ success: false, error: "Mode Remix penuh saat ini hanya tersedia untuk Mureka." }, { status: 400 });
       result = await sunoUpload(file, purpose === "voice" ? "voice" : "reference");
+      referenceId = result.id;
     } else {
       return NextResponse.json({ success: false, error: "Mesin musik tidak dikenal." }, { status: 400 });
     }
 
     if (!result.id || typeof result.id !== "string") throw new Error("Mesin musik tidak mengembalikan ID audio yang dapat digunakan.");
 
-    const response = NextResponse.json({ success: true, id: result.id, ...(purpose === "voice" ? { vocal_id: result.id } : {}), purpose, engine, stage2Reference: Boolean(stage2RemixId), stage2Ready: Boolean(stage2RemixId), remix_upload_id: stage2RemixId || (purpose === "remix" ? result.id : null), data: result.data });
+    const response = NextResponse.json({
+      success: true,
+      id: referenceId || result.id,
+      reference_id: referenceId || null,
+      purpose,
+      engine,
+      stage2Reference: Boolean(referenceId),
+      stage2Ready: Boolean(stage2RemixId),
+      remix_upload_id: stage2RemixId || (purpose === "remix" ? result.id : null),
+      warning: referenceWarning || null,
+      data: result.data,
+    });
     if (stage2RemixId && engine === "mureka" && (purpose === "reference" || purpose === "remix")) {
       response.cookies.set("salvian_stage2_pending", "1", stage2CookieOptions("/api/music"));
       response.cookies.set("salvian_stage2_remix_id", stage2RemixId, stage2CookieOptions("/api/music"));
