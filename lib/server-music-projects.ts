@@ -31,11 +31,23 @@ export async function ownsMusicTaskServer(userId: string, taskId: string) {
   return rows.length > 0;
 }
 
+export async function getMusicProjectServer(userId: string, taskId: string) {
+  if (!userId || !taskId) return null;
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, user_id, task_id, status, audio_url, provider_data
+    FROM public.salvian_music_projects
+    WHERE user_id = ${userId} AND task_id = ${taskId}
+    LIMIT 1
+  `;
+  return rows?.[0] ?? null;
+}
+
 export async function listMusicProjectsServer(userId: string) {
   if (!userId) return [];
   const sql = getSql();
   return await sql`
-    SELECT id, title, lyrics, style, model, task_id, status, audio_url, created_at, updated_at
+    SELECT id, title, lyrics, style, model, status, audio_url, created_at, updated_at
     FROM public.salvian_music_projects
     WHERE user_id = ${userId}
     ORDER BY created_at DESC
