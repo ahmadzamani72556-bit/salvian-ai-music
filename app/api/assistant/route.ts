@@ -1,23 +1,26 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 25;
+export const maxDuration = 20;
 
 const SYSTEM_PROMPT = `Anda adalah Asisten AI resmi di SALVIAN AI MUSIC.
-Anda adalah asisten percakapan serbaguna yang membantu pengguna dengan bahasa Indonesia yang jelas, ramah, dan praktis. Anda dapat menjawab pertanyaan umum, menjelaskan konsep, membantu menulis, merencanakan ide, serta membantu pembuatan lagu, lirik original, genre, vokal, prompt, model, hasil lagu, Library, dan pemecahan masalah Studio. Jangan membatasi jawaban hanya pada fitur musik; tanggapi pertanyaan pengguna sesuai konteks dan kemampuan Anda.
-SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, atau billing sendiri. Jangan meminta pengguna login, jangan membahas saldo/kredit/pembayaran, dan jangan mengarahkan pengguna ke halaman akun.
-Jangan pernah meminta password, API key, token, atau data rahasia. Jangan mengklaim dapat mengubah akun atau data pengguna secara langsung. Jangan meniru lirik berhak cipta atau mengklaim mengeksekusi tindakan yang tidak benar-benar dilakukan.`;
+Anda adalah asisten gratis yang fokus pada percakapan singkat, ide lagu, pembuatan lirik original, revisi lirik, judul, genre, suasana, prompt musik, dan bantuan penggunaan Studio. Jawab dalam bahasa pengguna, utamakan bahasa Indonesia jika pengguna memakai bahasa Indonesia. Jawaban harus langsung, praktis, dan tidak bertele-tele.
+Anda boleh membantu membuat lirik original dari tema yang diberikan pengguna. Jangan menyalin atau melanjutkan lirik berhak cipta yang diminta pengguna; tawarkan lirik original dengan tema atau nuansa yang serupa secara umum.
+SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, atau billing sendiri di dalam Asisten. Jangan meminta pengguna login, jangan meminta password, API key, token, atau data rahasia. Jangan mengklaim telah melakukan tindakan yang sebenarnya tidak dilakukan.
+Asisten ini hanya untuk teks. Jangan menghasilkan audio, jangan menjalankan proses pembuatan musik, dan jangan mengklaim telah membuat file musik. Jika pengguna ingin membuat audio, arahkan mereka untuk meneruskan hasil teks ke Studio Musik.`;
 
-// Gemini Flash-Lite dipakai untuk Asisten AI agar tidak bergantung pada OpenAI.
-// Ketersediaan biaya/gratis tetap mengikuti quota akun Google yang menyediakan API key.
-const GEMINI_MODEL = "gemini-2.5-flash-lite";
+// Jalur gratis khusus Asisten: teks pendek, lirik, ide, dan bantuan Studio.
+// Gemini Free Tier menyediakan input/output gratis untuk model yang didukung,
+// tetapi tetap memiliki batas penggunaan/rate limit dari project Google.
+const PRIMARY_MODEL = "gemini-3.1-flash-lite";
+const FALLBACK_MODEL = "gemini-2.5-flash-lite";
 const MAX_HISTORY_MESSAGES = 4;
-const MAX_HISTORY_CHARS = 1800;
-const MAX_OUTPUT_TOKENS = 650;
-const REQUEST_TIMEOUT_MS = 12000;
+const MAX_HISTORY_CHARS = 1600;
+const MAX_MESSAGE_CHARS = 6000;
+const MAX_OUTPUT_TOKENS = 550;
+const REQUEST_TIMEOUT_MS = 9000;
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
-
 type RawChatMessage = { role?: unknown; content?: unknown };
 
 function normalizeHistory(history: unknown[], message: string): ChatMessage[] {
@@ -25,8 +28,8 @@ function normalizeHistory(history: unknown[], message: string): ChatMessage[] {
 
   for (const item of history) {
     if (!item || typeof item !== "object") continue;
-
     const value = item as RawChatMessage;
+
     if (
       (value.role !== "user" && value.role !== "assistant") ||
       typeof value.content !== "string"
@@ -58,18 +61,22 @@ function classifyGeminiError(status: number, data: any) {
   if (status === 400) return "Permintaan Asisten AI tidak valid.";
   if (status === 401 || status === 403) return "Kunci Gemini untuk Asisten AI tidak valid atau tidak memiliki akses.";
   if (status === 404) return "Model Gemini Asisten AI tidak tersedia.";
-  if (status === 429) return "Batas penggunaan Gemini sedang tercapai. Coba lagi beberapa saat lagi.";
+  if (status === 429) return "Asisten gratis sedang mencapai batas penggunaan. Coba lagi sebentar.";
   if (status === 408 || status === 504) return "Asisten AI terlalu lama merespons. Coba lagi.";
 
   return `Layanan Asisten AI bermasalah (HTTP ${status}${providerStatus ? `, ${providerStatus}` : ""}${message ? `: ${message.slice(0, 160)}` : ""}).`;
 }
 
-async function callGemini(apiKey: string, contents: ReturnType<typeof toGeminiContents>) {
+async function callGemini(
+  apiKey: string,
+  model: string,
+  contents: ReturnType<typeof toGeminiContents>
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -77,7 +84,7 @@ async function callGemini(apiKey: string, contents: ReturnType<typeof toGeminiCo
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
         contents,
         generationConfig: {
-          temperature: 0.7,
+          temperature: 0.75,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
         },
       }),
@@ -91,6 +98,14 @@ async function callGemini(apiKey: string, contents: ReturnType<typeof toGeminiCo
   }
 }
 
+function extractAnswer(data: any): string {
+  if (!Array.isArray(data?.candidates?.[0]?.content?.parts)) return "";
+  return data.candidates[0].content.parts
+    .map((part: { text?: string }) => part.text || "")
+    .join("")
+    .trim();
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -98,19 +113,36 @@ export async function POST(request: Request) {
     const history = Array.isArray(body.history) ? body.history : [];
 
     if (!message) {
-      return NextResponse.json({ error: "Tulis pertanyaan Anda terlebih dahulu." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Tulis pertanyaan Anda terlebih dahulu." },
+        { status: 400 }
+      );
     }
-    if (message.length > 12000) {
-      return NextResponse.json({ error: "Pesan terlalu panjang untuk satu permintaan. Bagi menjadi beberapa pesan." }, { status: 400 });
+
+    if (message.length > MAX_MESSAGE_CHARS) {
+      return NextResponse.json(
+        { error: "Pesan terlalu panjang. Ringkas pertanyaan Anda agar Asisten Gratis dapat menjawab lebih cepat." },
+        { status: 400 }
+      );
     }
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: "Asisten AI belum aktif: GEMINI_API_KEY belum tersedia di server." }, { status: 503 });
+      return NextResponse.json(
+        { error: "Asisten AI belum aktif: GEMINI_API_KEY belum tersedia di server." },
+        { status: 503 }
+      );
     }
 
     const contents = toGeminiContents(normalizeHistory(history, message));
-    const result = await callGemini(apiKey, contents);
+
+    let result = await callGemini(apiKey, PRIMARY_MODEL, contents);
+
+    // Jika model utama belum tersedia pada project Google, gunakan model
+    // Flash-Lite cadangan yang juga memiliki Free Tier untuk teks.
+    if (!result.response.ok && result.response.status === 404) {
+      result = await callGemini(apiKey, FALLBACK_MODEL, contents);
+    }
 
     if (!result.response.ok) {
       console.error("SALVIAN MUSIC assistant Gemini error", {
@@ -123,16 +155,22 @@ export async function POST(request: Request) {
           error: classifyGeminiError(result.response.status, result.data),
           providerCode: result.data?.error?.status || undefined,
         },
-        { status: result.response.status >= 400 && result.response.status < 600 ? result.response.status : 502 }
+        {
+          status:
+            result.response.status >= 400 && result.response.status < 600
+              ? result.response.status
+              : 502,
+        }
       );
     }
 
-    const answer = Array.isArray(result.data?.candidates?.[0]?.content?.parts)
-      ? result.data.candidates[0].content.parts.map((part: { text?: string }) => part.text || "").join("").trim()
-      : "";
+    const answer = extractAnswer(result.data);
 
     if (!answer) {
-      return NextResponse.json({ error: "Asisten AI selesai memproses tetapi tidak menghasilkan jawaban." }, { status: 502 });
+      return NextResponse.json(
+        { error: "Asisten AI selesai memproses tetapi tidak menghasilkan jawaban." },
+        { status: 502 }
+      );
     }
 
     return NextResponse.json({ answer });
@@ -143,9 +181,15 @@ export async function POST(request: Request) {
     });
 
     if (error?.name === "AbortError") {
-      return NextResponse.json({ error: "Asisten AI terlalu lama merespons. Coba lagi." }, { status: 504 });
+      return NextResponse.json(
+        { error: "Asisten AI terlalu lama merespons. Coba lagi." },
+        { status: 504 }
+      );
     }
 
-    return NextResponse.json({ error: "Terjadi kesalahan saat menghubungkan ke Asisten AI." }, { status: 500 });
+    return NextResponse.json(
+      { error: "Terjadi kesalahan saat menghubungkan ke Asisten AI." },
+      { status: 500 }
+    );
   }
 }
