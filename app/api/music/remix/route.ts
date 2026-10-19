@@ -47,13 +47,26 @@ async function loadReferenceFromBlob(referenceUrl: string) {
   if (!pathname) throw new Error("Path Audio Referensi Blob tidak valid.");
 
   const access = /\.private\.blob\.vercel-storage\.com$/i.test(parsed.hostname) ? "private" : "public";
-  const result = await get(pathname, { access });
+  const result = await get(pathname, { access, useCache: false });
   if (!result) throw new Error("Audio Referensi tidak ditemukan di Blob.");
 
   const bytes = await new Response(result.stream).arrayBuffer();
   const contentType = result.blob.contentType || "application/octet-stream";
   const filename = pathname.split("/").pop() || "reference.mp3";
 
+  return { bytes, contentType, filename };
+}
+
+async function loadReferenceFromStage2Store(referenceId: string, workspace: string) {
+  const safeWorkspace = workspace.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const pathname = `music-stage2-references/${safeWorkspace}/${referenceId}`;
+  const result = await get(pathname, { access: "private", useCache: false });
+  if (!result) {
+    throw new Error("Audio Referensi ini diunggah sebelum penyimpanan Stage-2 aktif. Tekan Upload Referensi lagi agar file penuh tersimpan dan dapat dipakai Remix.");
+  }
+  const bytes = await new Response(result.stream).arrayBuffer();
+  const contentType = result.blob.contentType || "application/octet-stream";
+  const filename = result.blob.pathname.split("/").pop() || "reference.mp3";
   return { bytes, contentType, filename };
 }
 
@@ -72,14 +85,15 @@ export async function POST(request: NextRequest) {
 
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const referenceUrl = text(body.reference_url || body.referenceUrl);
+  const referenceId = text(body.reference_id || body.referenceId);
   const lyrics = text(body.lyrics);
   const prompt = text(body.prompt || body.style);
   const title = text(body.title) || "Salvian AI Music — Reference Remix";
   const nRaw = Number(body.n || 1);
   const n = Number.isFinite(nRaw) ? Math.min(3, Math.max(1, Math.floor(nRaw))) : 1;
 
-  if (!/^https:\/\//i.test(referenceUrl)) {
-    return NextResponse.json({ success: false, error: "Audio Referensi belum tersedia atau URL tidak valid." }, { status: 400 });
+  if (!referenceUrl && !referenceId) {
+    return NextResponse.json({ success: false, error: "Audio Referensi belum tersedia." }, { status: 400 });
   }
   if (!lyrics) {
     return NextResponse.json({ success: false, error: "Lirik baru wajib diisi." }, { status: 400 });
@@ -94,11 +108,12 @@ export async function POST(request: NextRequest) {
   ).slice(0, 1024);
 
   try {
-    // Keep the user's private Blob store private. The server reads the reference
-    // using its Blob credentials, then sends the bytes to Mureka as multipart data.
-    // This avoids exposing BLOB_READ_WRITE_TOKEN and avoids requiring Mureka to
-    // authenticate against a private Blob URL.
-    const reference = await loadReferenceFromBlob(referenceUrl);
+    // The client already has the Mureka reference file ID. New uploads also
+    // keep the original full-duration file in our private Blob store under a
+    // deterministic key, so Stage 2 can re-upload it to Mureka with purpose=remix.
+    const reference = referenceUrl
+      ? await loadReferenceFromBlob(referenceUrl)
+      : await loadReferenceFromStage2Store(referenceId, workspace);
 
     if (reference.bytes.byteLength > MAX_REFERENCE_BYTES) {
       return NextResponse.json(
@@ -205,7 +220,8 @@ export async function POST(request: NextRequest) {
         musicEngine: "mureka",
         billingProvider: "mureka",
         stage: "stage2-reference-duration-remix",
-        referenceUrl,
+        referenceId: referenceId || null,
+        referenceUrl: referenceUrl || null,
         upload: uploadData,
         remix: remixData,
       },
