@@ -43,8 +43,9 @@ async function elevenUpload(file: File) {
 }
 async function sunoUpload(file: File, purpose: "reference" | "voice") {
   if (!SUNO_API_KEY) throw new Error("SUNO_API_KEY belum tersedia di Vercel.");
-  const form = new FormData(); form.append("file", file, file.name);
+  const form = new FormData(); form.append("file", file, file.name); form.append("file_name", file.name); form.append("model", "suno-v6");
   let path = "/api/music/upload-source";
+  form.append("upload_type", "file_upload");
   if (purpose === "voice") { path = "/api/music/voice-profile/create"; form.append("title", file.name.replace(/\.[^.]+$/, "").slice(0, 80)); form.append("source_kind", "upload"); }
   const response = await fetch(`${SUNO_API_BASE_URL}${path}`, { method: "POST", headers: { Authorization: `Bearer ${SUNO_API_KEY}`, Accept: "application/json" }, body: form, cache: "no-store" });
   const data = await json(response);
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest) {
     else if (engine === "eleven_music_v2_5") result = await elevenUpload(file);
     else if (engine === "suno_v6") result = await sunoUpload(file, purpose);
     else return NextResponse.json({ success: false, error: "Mesin musik tidak dikenal." }, { status: 400 });
+    if (!result.id || typeof result.id !== "string") throw new Error("Mesin musik tidak mengembalikan ID audio yang dapat digunakan.");
 
     return NextResponse.json({ success: true, id: result.id, ...(purpose === "voice" ? { vocal_id: result.id } : {}), purpose, engine, data: result.data });
   } catch (error) {
