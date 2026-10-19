@@ -26,14 +26,17 @@ async function makeMurekaReadableUrl(referenceUrl: string) {
   const pathname = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
   if (!pathname) throw new Error("Path Audio Referensi Blob tidak valid.");
 
+  const validUntil = Date.now() + 15 * 60 * 1000;
   const signedToken = await issueSignedToken({
     pathname,
     operations: ["get"],
+    validUntil,
   });
   const { presignedUrl } = await presignUrl(signedToken, {
     pathname,
     operation: "get",
-    validUntil: Date.now() + 15 * 60 * 1000,
+    access: "private",
+    validUntil,
   });
   return presignedUrl;
 }
