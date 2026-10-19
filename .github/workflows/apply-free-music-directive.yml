@@ -1,0 +1,48 @@
+name: Apply unrestricted music directive patch
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[music-directive-patch]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch music prompt pipeline
+        shell: python
+        run: |
+          from pathlib import Path
+
+          studio = Path('components/premium-music-studio.tsx')
+          text = studio.read_text()
+          old = 'const style = `${prompt.slice(0, 900)}${prompt ? ", " : ""}${language}, ${tempo} BPM, ${gender} vocal`;'
+          new = 'const style = `${prompt.trim()}${prompt.trim() ? ", " : ""}${language}, ${tempo} BPM, ${gender} vocal`;'
+          if old not in text:
+              raise SystemExit('premium-music-studio.tsx: expected style line not found')
+          studio.write_text(text.replace(old, new, 1))
+
+          route = Path('app/api/music/route.ts')
+          text = route.read_text()
+          old = '''  const parts = [\n    "USER MUSIC CONCEPT — HIGHEST PRIORITY:",\n    rawStyle || "Create the music according to the user's other controls.",\n    `Language: ${language}.`,\n    tempo > 0 ? `Tempo: ${tempo} BPM.` : "",\n    gender ? `Preferred vocal: ${gender}.` : "",\n    instrumental ? "Instrumental only; no vocals." : "",\n    "Follow the user's concept literally and musically. Do not replace the requested genre, culture, era, rhythm, instrumentation, mood, vocal character, or production style with a generic alternative. If multiple genres/styles are requested, preserve the requested blend rather than choosing only one.",\n  ].filter(Boolean);\n  const joined = parts.join("\\n");\n  return provider === "mureka" ? joined.slice(0, 1024) : joined;'''
+          new = '''  // The free-form concept is the source of truth. Put it first so the provider\n  // limit never causes our own metadata to crowd the user's instructions out.\n  const concept = rawStyle || "Create the music according to the user's other controls.";\n  const metadata = [\n    `Language: ${language}.`,\n    tempo > 0 ? `Tempo: ${tempo} BPM.` : "",\n    gender ? `Preferred vocal: ${gender}.` : "",\n    instrumental ? "Instrumental only; no vocals." : "",\n  ].filter(Boolean).join("\\n");\n  const adherence = "Treat every explicit user instruction as binding: preserve the requested genre, subgenre, regional/cultural character, rhythm, tempo, instruments, vocal character, arrangement, mood, era, remix treatment, and production direction. Do not substitute a generic genre. If styles are combined, keep the requested combination clearly audible.";\n  const joined = [concept, metadata, adherence].filter(Boolean).join("\\n");\n  // Mureka's /v1/song/generate prompt field is capped at 1024 characters.\n  // This is a provider limit, not a genre/style whitelist: arbitrary user text\n  // remains accepted and is given the maximum available prompt budget.\n  return provider === "mureka" ? joined.slice(0, 1024) : joined;'''
+          if old not in text:
+              raise SystemExit('app/api/music/route.ts: expected directive block not found')
+          route.write_text(text.replace(old, new, 1))
+
+          workflow = Path('.github/workflows/apply-free-music-directive.yml')
+          workflow.unlink()
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/premium-music-studio.tsx app/api/music/route.ts .github/workflows/apply-free-music-directive.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: preserve full free-form music directives [music-directive-patch]"
+          git push
