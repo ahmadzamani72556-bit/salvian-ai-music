@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { put } from "@vercel/blob";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -16,21 +15,33 @@ async function json(response: Response) {
   try { return text ? JSON.parse(text) : {}; } catch { return { message: text }; }
 }
 
-async function murekaUpload(file: File, purpose: "reference" | "audio") {
+async function murekaUpload(file: File, purpose: "reference" | "remix") {
   if (!MUREKA_API_KEY) throw new Error("MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di Vercel.");
-  const form = new FormData(); form.append("file", file, file.name); form.append("purpose", purpose);
-  const response = await fetch(`${MUREKA_BASE_URL}/v1/files/upload`, { method: "POST", headers: { Authorization: `Bearer ${MUREKA_API_KEY}`, Accept: "application/json" }, body: form, cache: "no-store" });
+  const form = new FormData();
+  form.append("file", file, file.name);
+  form.append("purpose", purpose);
+  const response = await fetch(`${MUREKA_BASE_URL}/v1/files/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${MUREKA_API_KEY}`, Accept: "application/json" },
+    body: form,
+    cache: "no-store",
+  });
   const data = await json(response);
-  if (!response.ok) throw new Error(data?.error?.message || data?.message || `Mureka upload ${response.status}`);
-  return { id: data?.id || data?.file_id || data?.fileId, data };
+  if (!response.ok) throw new Error(data?.error?.message || data?.message || `Mureka upload ${purpose} ${response.status}`);
+  const id = data?.id || data?.file_id || data?.fileId;
+  if (!id) throw new Error(`Mureka tidak mengembalikan ID untuk upload ${purpose}.`);
+  return { id: String(id), data };
 }
+
 async function murekaVocal(file: File) {
   if (!MUREKA_API_KEY) throw new Error("MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di Vercel.");
   const form = new FormData(); form.append("file", file, file.name); form.append("description", "Karakter vokal creator SALVIAN AI MUSIC");
   const response = await fetch(`${MUREKA_BASE_URL}/v1/song/vocal-clone`, { method: "POST", headers: { Authorization: `Bearer ${MUREKA_API_KEY}`, Accept: "application/json" }, body: form, cache: "no-store" });
   const data = await json(response);
   if (!response.ok) throw new Error(data?.error?.message || data?.message || `Mureka vocal clone ${response.status}`);
-  return { id: data?.vocal_id || data?.id, data };
+  const id = data?.vocal_id || data?.id;
+  if (!id) throw new Error("Mureka tidak mengembalikan Vocal ID.");
+  return { id: String(id), data };
 }
 async function elevenUpload(file: File) {
   if (!ELEVEN_API_KEY) throw new Error("ELEVEN_API_KEY / ELEVENLABS_API_KEY belum tersedia di Vercel.");
@@ -57,6 +68,16 @@ async function sunoUpload(file: File, purpose: "reference" | "voice") {
   return { id: String(id), data };
 }
 
+function stage2CookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    path: "/api/music",
+    maxAge: 60 * 60,
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const form = await request.formData();
@@ -73,37 +94,46 @@ export async function POST(request: NextRequest) {
     }
 
     let result: { id: string; data: unknown };
-    if (engine === "mureka") result = purpose === "voice" ? await murekaVocal(file) : await murekaUpload(file, "reference");
-    else if (engine === "eleven_music_v2_5") result = await elevenUpload(file);
+    let stage2RemixId = "";
+
+    if (engine === "mureka") {
+      if (purpose === "voice") {
+        result = await murekaVocal(file);
+      } else {
+        // Keep the existing 30-second reference upload for Stage 1.
+        result = await murekaUpload(file, "reference");
+        // Also upload the same original file with purpose=remix. This is the
+        // authoritative full-duration source for Stage 2; no Blob round-trip
+        // is needed, so a newly uploaded file cannot disappear from storage.
+        const remix = await murekaUpload(file, "remix");
+        stage2RemixId = remix.id;
+      }
+    } else if (engine === "eleven_music_v2_5") result = await elevenUpload(file);
     else if (engine === "suno_v6") result = await sunoUpload(file, purpose);
     else return NextResponse.json({ success: false, error: "Mesin musik tidak dikenal." }, { status: 400 });
+
     if (!result.id || typeof result.id !== "string") throw new Error("Mesin musik tidak mengembalikan ID audio yang dapat digunakan.");
 
-    // Stage 1 keeps using the Mureka reference ID. Stage 2 also needs the
-    // original, full-duration bytes because Mureka's reference purpose trims
-    // audio to 30 seconds. Keep a private copy keyed by the Mureka file ID.
-    // This does not alter the Stage-1 Mureka reference flow.
-    let stage2Reference = false;
-    if (engine === "mureka" && purpose === "reference" && workspace) {
-      const safeWorkspace = workspace.replace(/[^a-zA-Z0-9_-]/g, "_");
-      const pathname = `music-stage2-references/${safeWorkspace}/${result.id}`;
-      try {
-        await put(pathname, file, { access: "private", addRandomSuffix: false });
-        stage2Reference = true;
-      } catch (blobError) {
-        console.error("SALVIAN Stage-2 reference Blob save error", blobError);
-      }
-    }
-
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       id: result.id,
       ...(purpose === "voice" ? { vocal_id: result.id } : {}),
       purpose,
       engine,
-      stage2Reference,
+      stage2Reference: Boolean(stage2RemixId),
+      stage2Ready: Boolean(stage2RemixId),
       data: result.data,
     });
+
+    if (stage2RemixId && workspace && engine === "mureka" && purpose === "reference") {
+      // The client already stores the normal reference ID. This short-lived
+      // server cookie carries the full-duration Remix upload ID into the next
+      // /api/music generation request without exposing it to browser JS.
+      response.cookies.set("salvian_stage2_pending", "1", stage2CookieOptions());
+      response.cookies.set("salvian_stage2_remix_id", stage2RemixId, stage2CookieOptions());
+    }
+
+    return response;
   } catch (error) {
     console.error("SALVIAN MUSIC upload error", error);
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Upload audio gagal." }, { status: 500 });
