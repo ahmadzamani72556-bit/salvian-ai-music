@@ -19,7 +19,14 @@ export default function MusicGenerationShell({ children }: { children: ReactNode
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-      if (Array.isArray(saved)) setSongs(saved.filter(item => item?.audio && item?.title));
+      if (Array.isArray(saved)) {
+        const restored = saved.filter(item => item?.audio && item?.title);
+        setSongs(restored);
+        // If the user returns to the app and previous songs still exist,
+        // reopen the results screen so there is always a clear path back
+        // to the persistent music history. Songs are never removed here.
+        if (restored.length > 0) setPhase("result");
+      }
     } catch {
       // Ignore malformed local history and keep the studio usable.
     }
