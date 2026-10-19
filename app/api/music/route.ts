@@ -166,6 +166,45 @@ function buildUserMusicDirective(body: Record<string, unknown>, provider: "murek
   return provider === "mureka" ? joined.slice(0, 1024) : joined;
 }
 
+function requestedStyleTokens(rawStyle: string, tempo: number, instrumental: boolean) {
+  const s = rawStyle.toLowerCase();
+  const positive: string[] = [];
+  const negative = new Set<string>();
+  const add = (...v: string[]) => v.forEach(x => { if (!positive.includes(x)) positive.push(x); });
+  if (/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) {
+    add("deep devotional qasidah", "sholawat melodic phrasing", "Islamic devotional melody", "spiritual Middle Eastern melodic ornamentation", "reverent expressive vocal delivery", "warm frame-drum and hand-percussion colors");
+  }
+  if (/dangdut/.test(s)) {
+    add("strong Indonesian dangdut groove", "kendang-style rhythmic accents", "syncopated dangdut bass", "punchy kick and percussion", "ornamental dangdut melodic phrasing", "lively rhythmic fills");
+  }
+  if (/slow|lambat|syahdu|sendu/.test(s)) add("slow devotional pacing", "spacious emotional phrasing", "gentle dynamics");
+  if (/pop/.test(s)) add("modern pop songwriting", "polished pop arrangement");
+  if (/rock/.test(s)) add("rock rhythm section", "electric guitar driven arrangement");
+  if (/reggae/.test(s)) add("reggae offbeat groove", "deep reggae bass pocket");
+  if (/melayu/.test(s)) add("Melayu melodic phrasing", "warm Melayu ornamentation");
+  if (/minang/.test(s)) add("Minang melodic character", "Minang rhythmic ornamentation");
+  if (/ambon/.test(s)) add("Ambon melodic character", "warm Eastern Indonesian phrasing");
+  if (/dj|edm|electronic/.test(s)) add("DJ/electronic rhythmic production");
+  if (tempo > 0) add(`${tempo} BPM");
+  add("crystal-clear lead vocal", "bright warm full-bodied vocal", "clean controlled vibrato", "tasteful melisma and cengkok", "punchy clean low end", "clear separated mids", "open non-harsh highs", "modern polished commercial mix");
+  const dominant = [
+    ["pop", "pop"], ["rock", "rock"], ["reggae", "reggae"], ["dangdut", "dangdut"], ["dj|edm|electronic", "electronic/dance"], ["hip.?hop|rap", "hip-hop"], ["country", "country"], ["metal", "metal"], ["jazz", "jazz"], ["classical|orchestral", "orchestral"],
+  ];
+  for (const [pattern, label] of dominant) {
+    if (!new RegExp(pattern).test(s)) negative.add(label);
+  }
+  if (!/pop/.test(s)) negative.add("generic pop");
+  if (!/dj|edm|electronic/.test(s)) negative.add("DJ/EDM/electronic club beat");
+  if (!/hip.?hop|rap/.test(s)) negative.add("hip-hop/rap");
+  if (!/rock/.test(s)) negative.add("rock");
+  if (!/reggae/.test(s)) negative.add("reggae");
+  if (!/country/.test(s)) negative.add("country");
+  if (!/metal/.test(s)) negative.add("metal");
+  if (!/dangdut/.test(s)) negative.add("dangdut");
+  if (instrumental) negative.add("lead vocals and lyrics");
+  return { positive, negative: [...negative] };
+}
+
 // Shared quality layer for Mesin 2.5 + Suno. This does NOT modify Mesin 1.
 function buildPremiumMusicDirective(body: Record<string, unknown>) {
   const rawStyle = String(body.style || "").trim();
@@ -175,26 +214,27 @@ function buildPremiumMusicDirective(body: Record<string, unknown>) {
   const instrumental = body.instrumental === true;
   const referenceId = String(body.reference_id || "").trim();
   const vocalId = String(body.vocal_id || "").trim();
+  const styleTokens = requestedStyleTokens(rawStyle, tempo, instrumental);
   const targetDurationMs = Number(body.reference_duration_ms || 0);
   const targetDuration = Number.isFinite(targetDurationMs) && targetDurationMs >= 10000 ? `${Math.round(targetDurationMs / 1000)} seconds` : "";
   return [
-    "SALVIAN AI PREMIUM MUSIC + VOCAL STANDARD. The user's requested style is the source of truth.",
-    rawStyle || "Create the music according to the user's controls.",
+    "SALVIAN AI PREMIUM MUSIC + VOCAL STANDARD. HARD STYLE LOCK: the user's explicit style/concept is mandatory and has priority over generic model defaults.",
+    `REQUESTED STYLE (DO NOT SUBSTITUTE): ${rawStyle || "follow the user's controls exactly"}.`,
+    `English style anchors: ${styleTokens.positive.slice(0, 14).join(", ")}.`,
+    `English styles to avoid unless explicitly requested: ${styleTokens.negative.join(", ")}.`,
     `Language: ${language}.`,
-    tempo > 0 ? `Target tempo: ${tempo} BPM.` : "",
     gender ? `Preferred vocal gender: ${gender}.` : "",
     instrumental ? "INSTRUMENTAL ONLY; no vocals." : "",
-    "VOCAL CLARITY LOCK: vocal must be exceptionally clear, bright, clean, warm, full-bodied, present and intelligible. Every Indonesian consonant, vowel, syllable and word ending must remain audible. Avoid mumbling, swallowed words, nasal/dull tone, robotic tone, excessive reverb and buried vocals.",
-    "VOCAL EXPRESSION: sing naturally and confidently with a strong, beautiful, melodic dangdut cengkok and tasteful melisma/vibrato. Cengkok must decorate sustained vowels and never obscure the lyric words. Vocal should be merdu, lantang, terang and emotionally expressive without sounding harsh.",
-    "QASIDAH/SHOLAWAT MODE: when the concept asks for qasidah, sholawat, religi or Islami, make the Islamic character unmistakable and deep. Use a soulful sholawat melodic feeling, devotional phrasing, tasteful melismatic turns and a reverent emotional atmosphere. Do not reduce it to generic pop.",
-    "DANGDUT SHOLAWAT MODE: when dangdut is requested with sholawat/religi, make the dangdut identity strong in the groove, bass, kick, percussion, kendang-style accents, fills and melodic ornaments while keeping the sholawat/religious melodic character prominent. For slow requests, keep the tempo slow and devotional while retaining tasteful dangdut phrasing.",
-    "MUSIC IMPACT + MIX: punchy but smooth; strong kick/bass and rhythmic accents; clean fills and transitions; full and round low end; clean mids; open bright highs; clear vocal separation; controlled dynamics; no muddy bass, boxy mids, harsh highs, clipping or excessive reverb.",
-    "LYRIC LOCK: use the supplied lyrics exactly and in their original order. Do not rewrite, paraphrase, translate, summarize, invent, omit or replace lyric words. Preserve the line/section flow and make the diction intelligible. Fit the lyrics naturally to the musical phrases instead of flattening or randomly repeating them.",
-    referenceId ? "AUDIO REFERENCE ACTIVE: use the reference as a primary musical guide for groove, beat placement, tempo feel, melodic contour, vocal melody, phrasing, arrangement flow, sections, transitions and production character. Preserve its recognizable musical logic while creating an original result." : "",
-    vocalId ? "VOCAL REFERENCE ACTIVE: preserve the selected vocal identity/timbre and combine it with the requested clear, bright, warm and expressive vocal standard." : "",
-    referenceId && vocalId ? "REFERENCE + VOCAL: keep the reference music identity and selected vocal identity together; do not replace either with generic music or a generic voice." : "",
+    "VOCAL CLARITY LOCK: exceptionally clear, bright, clean, warm, full-bodied, present and intelligible. Every Indonesian consonant, vowel, syllable and word ending must remain audible. No mumbling, swallowed words, foreign-language drift, nasal/dull tone, robotic tone, buried vocal or excessive reverb.",
+    "VOCAL EXPRESSION: natural confident singing with beautiful melodic dangdut-style cengkok and tasteful melisma/vibrato where appropriate. Cengkok decorates sustained vowels and never obscures lyric words. Vocal is merdu, lantang, terang, emotional and controlled, never harsh.",
+    "QASIDAH/SHOLAWAT LOCK: if qasidah, sholawat, religi or Islami is requested, the Islamic devotional identity must be obvious and deep in the melody, phrasing, ornamentation, cadence and atmosphere. Do not turn it into generic pop or unrelated dance music.",
+    "DANGDUT SHOLAWAT LOCK: if dangdut + sholawat/religi is requested, keep strong dangdut groove, kendang-style accents, bass/kick drive, fills and melodic ornaments while the sholawat melodic identity stays prominent. If slow is requested, remain slow and devotional.",
+    "MUSIC + MIX STANDARD: punchy but smooth; strong clean kick/bass; rhythmic accents and tasteful fills/transitions; full round low end; clean mids; open bright highs; separated instruments; controlled dynamics; no muddy bass, boxy mids, harsh highs or clipping.",
+    "LYRIC LOCK: supplied lyrics are sacred input. Preserve every word, line and original order exactly. Never rewrite, paraphrase, translate, summarize, invent, omit, duplicate or replace words. Fit the exact lyrics into musical phrases naturally.",
+    referenceId ? "AUDIO REFERENCE ACTIVE: use the reference as a primary guide for groove, beat placement, tempo feel, melodic contour, vocal melody, phrasing, arrangement flow, sections, transitions and production character. Preserve its recognizable musical logic while making an original result." : "",
+    vocalId ? "VOCAL REFERENCE ACTIVE: preserve the selected vocal identity/timbre while applying the clear, bright, warm and expressive vocal standard." : "",
+    referenceId && vocalId ? "REFERENCE + VOCAL: keep both the reference music direction and selected vocal identity; never replace either with a generic default." : "",
     targetDuration ? `Target duration: approximately ${targetDuration}.` : "",
-    "STYLE LOCK: every explicit genre, rhythm, mood, cultural/religious character, remix type and production term requested by the user is mandatory. Never substitute a different dominant genre.",
   ].filter(Boolean).join("\n");
 }
 
@@ -203,18 +243,42 @@ function buildElevenPrompt(body: Record<string, unknown>) {
   const concept = buildPremiumMusicDirective(body);
   const instrumental = body.instrumental === true;
   const arrangement = instrumental
-    ? "Use a coherent instrumental arrangement with an immediate identity, development, variation, climax and clean ending."
-    : "Use a coherent song arrangement with intro, verses, chorus, development/bridge, final chorus and outro when appropriate to the requested style.";
-  const lyricsBudget = Math.max(0, 4000 - concept.length - arrangement.length - 220);
-  const clippedLyrics = lyrics.slice(0, lyricsBudget);
+    ? "Create a coherent instrumental arrangement with a clear identity, development, variation, climax and clean ending."
+    : "Create a coherent song arrangement with intro, verses, chorus, development/bridge, final chorus and outro only when appropriate to the requested style.";
+  const lyricBlock = instrumental ? "" : `EXACT LYRICS — DO NOT CHANGE OR REORDER:\n${lyrics}`;
   return [
-    "Create an original song with Music v2.5.",
+    "Create an original song with Eleven Music v2.5.",
     concept,
     arrangement,
-    "PROMPT ADHERENCE: the user's concept and quality standard are mandatory throughout the complete track. Do not drift into another dominant genre or generic pop.",
-    instrumental ? "INSTRUMENTAL ONLY." : "Use the supplied lyrics as the lyrical source and do not replace them with unrelated lyrics.",
-    clippedLyrics ? `LYRICS:\n${clippedLyrics}` : "",
+    "PROMPT ADHERENCE LOCK: the requested genre/style is not a suggestion. Never drift into another dominant genre. If the user says qasidah, make qasidah. If the user says dangdut, make dangdut. If the user says dangdut sholawat, make dangdut sholawat. If the user says slow, keep it slow.",
+    lyricBlock,
   ].filter(Boolean).join("\n\n").slice(0, 4100);
+}
+
+function enforceElevenPlan(plan: any, body: Record<string, unknown>) {
+  if (!plan || !Array.isArray(plan.chunks) || !plan.chunks.length) return plan;
+  const rawStyle = String(body.style || "").trim();
+  const tempo = Number(body.tempo || 0);
+  const instrumental = body.instrumental === true;
+  const locks = requestedStyleTokens(rawStyle, tempo, instrumental);
+  const lyrics = String(body.lyrics || "").trim();
+  const lines = instrumental ? [] : lyrics.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  const chunks = plan.chunks.map((chunk: any, index: number) => {
+    const positive = Array.isArray(chunk.positive_styles) ? chunk.positive_styles.map(String) : [];
+    const negative = Array.isArray(chunk.negative_styles) ? chunk.negative_styles.map(String) : [];
+    const mergedPositive = [...locks.positive.slice(0, index === 0 ? 16 : 10), ...positive].filter((v, i, a) => a.indexOf(v) === i).slice(0, 50);
+    const mergedNegative = [...locks.negative, ...negative].filter((v, i, a) => a.indexOf(v) === i).slice(0, 50);
+    const next: any = { ...chunk, positive_styles: mergedPositive, negative_styles: mergedNegative, context_adherence: "high" };
+    if (lines.length) {
+      const total = plan.chunks.length;
+      const start = Math.floor(lines.length * index / total);
+      const end = index === total - 1 ? lines.length : Math.max(start + 1, Math.floor(lines.length * (index + 1) / total));
+      const section = typeof chunk.text === "string" ? (chunk.text.match(/^\s*(\[[^\]]+\])/)?.[1] || `[Section ${index + 1}]`) : `[Section ${index + 1}]`;
+      next.text = `${section}\n${lines.slice(start, end).join("\n")}`;
+    }
+    return next;
+  });
+  return { ...plan, chunks };
 }
 
 async function elevenCompose(body: Record<string, unknown>) {
@@ -228,10 +292,9 @@ async function elevenCompose(body: Record<string, unknown>) {
     cache: "no-store",
   });
   const planData = await readJson(planResponse) as any;
-  const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? planData : null;
+  const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? enforceElevenPlan(planData, body) : null;
   const requestBody: Record<string, unknown> = { model_id: "music_v2_5", force_instrumental: body.instrumental === true, store_for_inpainting: false };
   if (compositionPlan) {
-    compositionPlan.chunks = compositionPlan.chunks.map((chunk: any) => ({ ...chunk, context_adherence: "high" }));
     const conditioningIds = [body.reference_id, body.vocal_id].filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
     if (conditioningIds.length && compositionPlan.chunks.length) {
       compositionPlan.chunks[0] = { ...compositionPlan.chunks[0], conditioning_ref: { song_id: String(conditioningIds[0]), range: { start_ms: 0, end_ms: 30000 } }, condition_strength: "high" };
