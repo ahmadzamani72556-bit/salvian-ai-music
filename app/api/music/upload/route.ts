@@ -27,22 +27,50 @@ function pickId(data: any) {
   return id ? String(id) : "";
 }
 
-async function murekaUpload(file: File, purpose: "reference" | "remix") {
+async function murekaUpload(file: File, purpose: "reference" | "remix", timeoutMs?: number) {
   if (!MUREKA_API_KEY) throw new Error("MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di Vercel.");
   const form = new FormData();
   form.append("file", file, file.name);
   form.append("purpose", purpose);
-  const response = await fetch(`${MUREKA_BASE_URL}/v1/files/upload`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${MUREKA_API_KEY}`, Accept: "application/json" },
-    body: form,
-    cache: "no-store",
-  });
-  const data = await json(response);
-  if (!response.ok) throw new Error(`Mureka upload ${purpose} gagal (${response.status}): ${data?.error?.message || data?.message || "respons tidak menjelaskan penyebab"}`);
-  const id = pickId(data);
-  if (!id) throw new Error(`Mureka tidak mengembalikan ID untuk upload ${purpose}.`);
-  return { id, data };
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetch(`${MUREKA_BASE_URL}/v1/files/upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${MUREKA_API_KEY}`, Accept: "application/json" },
+      body: form,
+      cache: "no-store",
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    const data = await json(response);
+    if (!response.ok) throw new Error(`Mureka upload ${purpose} gagal (${response.status}): ${data?.error?.message || data?.message || "respons tidak menjelaskan penyebab"}`);
+    const id = pickId(data);
+    if (!id) throw new Error(`Mureka tidak mengembalikan ID untuk upload ${purpose}.`);
+    return { id, data };
+  } catch (error) {
+    if (controller && (error instanceof Error && error.name === "AbortError")) {
+      throw new Error(`Mureka upload ${purpose} timeout setelah ${Math.round((timeoutMs || 0) / 1000)} detik.`);
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function murekaRemixUpload(file: File) {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await murekaUpload(file, "remix");
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const transient = /\((429|500|502|503|504)\)/.test(message) || /timeout/i.test(message);
+      if (!transient || attempt === 2) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Mureka Remix upload gagal.");
 }
 
 async function murekaVocal(file: File) {
@@ -95,7 +123,7 @@ export async function POST(request: NextRequest) {
     const engine = String(form.get("engine") || "mureka").toLowerCase();
     const purpose: "reference" | "voice" | "remix" = requestedPurpose === "voice" ? "voice" : requestedPurpose === "remix" ? "remix" : "reference";
     if (!(file instanceof File)) return NextResponse.json({ success: false, error: "File audio belum dipilih." }, { status: 400 });
-    if (file.size > 10 * 1024 * 1024) return NextResponse.json({ success: false, error: "Ukuran file maksimal 10 MB." }, { status: 413 });
+    if (file.size > 10 * 1024 * 1024) return NextResponse.json({ success: false, error: "Ukuran file maksimal 10 MB. Mureka membatasi upload file pada 10 MB." }, { status: 413 });
     const name = file.name.toLowerCase();
     if (!(name.endsWith(".mp3") || name.endsWith(".m4a") || (engine === "suno_v6" && (name.endsWith(".wav") || name.endsWith(".aac") || name.endsWith(".flac") || name.endsWith(".ogg"))))) return NextResponse.json({ success: false, error: "Format audio yang didukung: MP3 atau M4A (Suno juga menerima WAV, AAC, FLAC, dan OGG)." }, { status: 400 });
 
@@ -108,27 +136,26 @@ export async function POST(request: NextRequest) {
       if (purpose === "voice") {
         result = await murekaVocal(file);
       } else if (purpose === "remix") {
-        result = await murekaUpload(file, "remix");
+        result = await murekaRemixUpload(file);
         stage2RemixId = result.id;
       } else {
-        // The full-duration Remix path is the critical Stage-2 path.
-        // Upload it FIRST so two simultaneous 10 MB requests cannot compete
-        // for a mobile connection and cause the Remix upload to time out.
-        // BOP/reference is still preserved and attempted afterwards.
-        const remixResult = await murekaUpload(file, "remix");
-        stage2RemixId = remixResult.id;
-        result = remixResult;
-
-        // Preserve the established BOP/reference path. Its failure must never
-        // invalidate a successful 10–350 second Remix upload.
+        // BOP/reference and full-duration Remix are deliberately separate paths.
+        // BOP is attempted first with a short server-side timeout so a slow/failing
+        // 30-second reference upload can never block the critical 10–350s Remix path.
         try {
-          const referenceResult = await murekaUpload(file, "reference");
+          const referenceResult = await murekaUpload(file, "reference", 30000);
           referenceId = referenceResult.id;
         } catch (error) {
           referenceWarning = error instanceof Error
             ? error.message
-            : "Upload BOP/reference gagal, tetapi upload Remix penuh berhasil.";
+            : "Upload BOP/reference gagal; alur Remix penuh akan tetap dilanjutkan.";
         }
+
+        // The full-duration Remix path is always attempted independently.
+        // This is the ID consumed by /v1/song/remix and supports 10–350 seconds.
+        const remixResult = await murekaRemixUpload(file);
+        stage2RemixId = remixResult.id;
+        result = remixResult;
       }
     } else if (engine === "eleven_music_v2_5") {
       result = await elevenUpload(file);
