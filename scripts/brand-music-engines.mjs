@@ -80,9 +80,9 @@ patch("app/api/music/route.ts", [
   if (slow) negative.push("fast tempo", "high-speed dance beat");
 
   const prompt = [
-    `HARD STYLE TARGET: ${rawStyle || "follow the user's exact concept"}.`,
-    positive.length ? `MANDATORY POSITIVE STYLE: ${positive.join("; ")}.` : "",
-    negative.length ? `MANDATORY NEGATIVE STYLE: ${Array.from(new Set(negative)).join("; ")}.` : "",
+    `HARD STYLE TARGET: \${rawStyle || "follow the user's exact concept"}.`,
+    positive.length ? `MANDATORY POSITIVE STYLE: \${positive.join("; ")}.` : "",
+    negative.length ? `MANDATORY NEGATIVE STYLE: \${Array.from(new Set(negative)).join("; ")}.` : "",
     "Never silently replace the requested dominant genre with another genre.",
   ].filter(Boolean).join(" ");
   return { positive: Array.from(new Set(positive)), negative: Array.from(new Set(negative)), prompt };
