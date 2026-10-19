@@ -24,6 +24,16 @@ function pickId(data: any) {
 async function murekaUpload(file: File, purpose: "reference" | "remix", timeoutMs?: number) {
   if (!MUREKA_API_KEY) throw new Error("MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di Vercel.");
   const form = new FormData(); form.append("file", file, file.name); form.append("purpose", purpose);
+  return murekaUploadForm(form, purpose, timeoutMs);
+}
+
+async function murekaUploadUrl(url: string, purpose: "reference" | "remix", timeoutMs?: number) {
+  if (!MUREKA_API_KEY) throw new Error("MUREKA_API_KEY / MUSIC_API_KEY belum tersedia di Vercel.");
+  const form = new FormData(); form.append("url", url); form.append("purpose", purpose);
+  return murekaUploadForm(form, purpose, timeoutMs);
+}
+
+async function murekaUploadForm(form: FormData, purpose: "reference" | "remix", timeoutMs?: number) {
   const controller = timeoutMs ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
@@ -42,6 +52,21 @@ async function murekaRemixUpload(file: File) {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try { return await murekaUpload(file, "remix"); }
+    catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const transient = /\((429|500|502|503|504)\)/.test(message) || /timeout/i.test(message);
+      if (!transient || attempt === 2) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Mureka Remix upload gagal.");
+}
+
+async function murekaRemixUploadUrl(url: string) {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try { return await murekaUploadUrl(url, "remix"); }
     catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
@@ -88,13 +113,15 @@ function stage2CookieOptions(path = "/api/music") { return { httpOnly: true, sec
 export async function POST(request: NextRequest) {
   try {
     const form = await request.formData();
-    const file = form.get("file");
+    const rawFile = form.get("file");
+    const fileUrl = String(form.get("file_url") || "").trim();
     const requestedPurpose = String(form.get("purpose") || "reference").toLowerCase();
     const engine = String(form.get("engine") || "mureka").toLowerCase();
     const purpose: "reference" | "voice" | "remix" = requestedPurpose === "voice" ? "voice" : requestedPurpose === "remix" ? "remix" : "reference";
-    if (!(file instanceof File)) return NextResponse.json({ success: false, error: "File audio belum dipilih." }, { status: 400 });
-    if (file.size > 10 * 1024 * 1024) return NextResponse.json({ success: false, error: `File ${(file.size / 1024 / 1024).toFixed(1)} MB terlalu besar. Mureka files/upload membatasi file langsung sampai 10 MB.` }, { status: 413 });
-    const name = file.name.toLowerCase();
+    if (!(rawFile instanceof File) && !fileUrl) return NextResponse.json({ success: false, error: "File audio belum dipilih." }, { status: 400 });
+    if (rawFile instanceof File && rawFile.size > 10 * 1024 * 1024) return NextResponse.json({ success: false, error: `File ${(rawFile.size / 1024 / 1024).toFixed(1)} MB terlalu besar. Mureka files/upload membatasi file langsung sampai 10 MB.` }, { status: 413 });
+    const file = rawFile instanceof File ? rawFile : null;
+    const name = String(form.get("file_name") || file?.name || fileUrl.split("/").pop() || "audio.mp3").toLowerCase();
     if (!(name.endsWith(".mp3") || name.endsWith(".m4a") || (engine === "suno_v6" && (name.endsWith(".wav") || name.endsWith(".aac") || name.endsWith(".flac") || name.endsWith(".ogg"))))) return NextResponse.json({ success: false, error: "Format audio yang didukung: MP3 atau M4A (Suno juga menerima WAV, AAC, FLAC, dan OGG)." }, { status: 400 });
 
     let result: { id: string; data: unknown };
@@ -104,27 +131,32 @@ export async function POST(request: NextRequest) {
 
     if (engine === "mureka") {
       if (purpose === "voice") {
+        if (!file) throw new Error("Voice & Vocal memerlukan file langsung.");
         result = await murekaVocal(file);
       } else if (purpose === "remix") {
-        result = await murekaRemixUpload(file);
+        result = fileUrl ? await murekaRemixUploadUrl(fileUrl) : await murekaRemixUpload(file!);
         stage2RemixId = result.id;
       } else {
         // Full-duration Remix is the source of truth for Stage-2.
-        const remixResult = await murekaRemixUpload(file);
+        // Large files arrive here as a public Blob URL, so the 4.5 MB Vercel
+        // Function request-body limit is no longer in the audio path.
+        const remixResult = fileUrl ? await murekaRemixUploadUrl(fileUrl) : await murekaRemixUpload(file!);
         stage2RemixId = remixResult.id;
         result = remixResult;
 
         // BOP/reference remains a secondary 30-second reference path.
         try {
-          const referenceResult = await murekaUpload(file, "reference", 30000);
+          const referenceResult = fileUrl ? await murekaUploadUrl(fileUrl, "reference", 30000) : await murekaUpload(file!, "reference", 30000);
           referenceId = referenceResult.id;
         } catch (error) {
           referenceWarning = error instanceof Error ? error.message : "Upload BOP/reference gagal; Remix penuh tetap siap.";
         }
       }
     } else if (engine === "eleven_music_v2_5") {
+      if (!file) throw new Error("Eleven Music memerlukan file langsung.");
       result = await elevenUpload(file); referenceId = result.id;
     } else if (engine === "suno_v6") {
+      if (!file) throw new Error("Suno memerlukan file langsung.");
       if (purpose === "remix") return NextResponse.json({ success: false, error: "Mode Remix penuh saat ini hanya tersedia untuk Mureka." }, { status: 400 });
       result = await sunoUpload(file, purpose === "voice" ? "voice" : "reference"); referenceId = result.id;
     } else {
@@ -133,10 +165,6 @@ export async function POST(request: NextRequest) {
 
     if (!result.id || typeof result.id !== "string") throw new Error("Mesin musik tidak mengembalikan ID audio yang dapat digunakan.");
 
-    // The client historically uses `id` to decide whether Stage-2 should use
-    // /api/music/remix. If BOP/reference is unavailable, expose the successful
-    // full-duration Remix ID through `id` as well. The actual reference_id
-    // remains null, while remix_upload_id stays authoritative for Stage-2.
     const stage2ClientId = referenceId || (purpose === "reference" && stage2RemixId ? stage2RemixId : "");
     const response = NextResponse.json({
       success: true,
