@@ -131,6 +131,40 @@ button { cursor: pointer; }
     max-width: 100% !important;
   }
 
+  /* Stage-2 upload cards: force both cards to use the actual mobile column
+     width. Their flex content must be allowed to shrink so a long filename
+     cannot establish a larger intrinsic width for the button/grid. */
+  [data-premium-studio] section.grid > div:first-child,
+  [data-premium-studio] section.grid > div:first-child > div:first-child {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  [data-premium-studio] section.grid > div:first-child > div:first-child > button {
+    display: flex !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+
+  [data-premium-studio] section.grid > div:first-child > div:first-child > button > span:nth-child(2) {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    flex: 1 1 0% !important;
+    overflow: hidden !important;
+  }
+
+  [data-premium-studio] section.grid > div:first-child > div:first-child > button > span:nth-child(2) > span {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
   [data-premium-studio] h1,
   [data-premium-studio] h2,
   [data-premium-studio] h3,
