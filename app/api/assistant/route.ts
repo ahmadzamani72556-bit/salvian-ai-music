@@ -9,6 +9,13 @@ Anda adalah asisten percakapan serbaguna yang membantu pengguna dengan bahasa In
 SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, atau billing sendiri. Jangan meminta pengguna login, jangan membahas saldo/kredit/pembayaran, dan jangan mengarahkan pengguna ke halaman akun.
 Jangan pernah meminta password, API key, token, atau data rahasia. Jangan mengklaim dapat mengubah akun atau data pengguna secara langsung. Jangan meniru lirik berhak cipta atau mengklaim mengeksekusi tindakan yang tidak benar-benar dilakukan.`;
 
+const FAST_MODEL = "gpt-4.1-mini";
+const MAX_HISTORY_MESSAGES = 6;
+const MAX_HISTORY_CHARS = 2500;
+const MAX_OUTPUT_TOKENS = 800;
+
+type ChatMessage = { role: "user" | "assistant"; content: string };
+
 function getProviderError(error: any) {
   return {
     code: String(error?.code || "").toLowerCase(),
@@ -28,17 +35,29 @@ function classifyOpenAIError(status: number, error: any) {
     if (code === "rate_limit_exceeded" || type === "rate_limit_exceeded") {
       return "Permintaan Asisten AI sedang mencapai batas laju model. Silakan coba lagi sebentar.";
     }
-    return "OpenAI menolak permintaan Asisten AI dengan HTTP 429. Penyebabnya bukan lagi disamarkan sebagai sekadar pembatasan.";
+    return "OpenAI menolak permintaan Asisten AI dengan HTTP 429.";
   }
   return `Layanan Asisten AI sedang bermasalah (HTTP ${status}, ${code || type || "unknown"}).`;
 }
 
-async function createResponse(client: OpenAI, model: string, input: Array<{ role: "user" | "assistant"; content: string }>) {
+function makeSse(body: ReadableStream<Uint8Array>) {
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+async function streamModel(client: OpenAI, model: string, input: ChatMessage[]) {
   return client.responses.create({
     model,
     instructions: SYSTEM_PROMPT,
     input,
-    max_output_tokens: 1200,
+    max_output_tokens: MAX_OUTPUT_TOKENS,
+    stream: true,
   });
 }
 
@@ -47,50 +66,46 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const message = typeof body.message === "string" ? body.message.trim() : "";
     const history = Array.isArray(body.history) ? body.history : [];
+
     if (!message) return NextResponse.json({ error: "Tulis pertanyaan Anda terlebih dahulu." }, { status: 400 });
     if (message.length > 12000) return NextResponse.json({ error: "Pesan terlalu panjang untuk satu permintaan. Bagi menjadi beberapa pesan." }, { status: 400 });
 
-    const safeHistory = history
+    const safeHistory: ChatMessage[] = history
       .filter((item: unknown) => {
         if (!item || typeof item !== "object") return false;
         const value = item as { role?: unknown; content?: unknown };
         return (value.role === "user" || value.role === "assistant") && typeof value.content === "string";
       })
-      .slice(-12)
+      .slice(-MAX_HISTORY_MESSAGES)
       .map((item: { role: "user" | "assistant"; content: string }) => ({
         role: item.role,
-        content: item.content.slice(0, 5000),
+        content: item.content.slice(0, MAX_HISTORY_CHARS),
       }));
+
+    safeHistory.push({ role: "user", content: message });
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return NextResponse.json({ error: "Asisten AI belum aktif di server: OPENAI_API_KEY belum tersedia." }, { status: 503 });
 
     const client = new OpenAI({ apiKey });
-    safeHistory.push({ role: "user", content: message });
-    const model = (process.env.OPENAI_ASSISTANT_MODEL || process.env.OPENAI_TEXT_MODEL || process.env.OPENAI_LYRICS_MODEL || "gpt-4.1-mini").trim();
+    const configuredModel = (process.env.OPENAI_ASSISTANT_MODEL || process.env.OPENAI_TEXT_MODEL || process.env.OPENAI_LYRICS_MODEL || FAST_MODEL).trim();
+
+    const encoder = new TextEncoder();
+    let stream: AsyncIterable<any>;
 
     try {
-      let response;
       try {
-        response = await createResponse(client, model, safeHistory);
+        stream = await streamModel(client, configuredModel, safeHistory);
       } catch (firstError: any) {
         const firstStatus = Number(firstError?.status || firstError?.statusCode || 0);
         const { code: firstCode, type: firstType } = getProviderError(firstError);
-
-        // Recover from an obsolete/unavailable configured model.
-        if ((firstStatus === 404 || firstCode === "model_not_found") && model !== "gpt-4.1-mini") {
-          response = await createResponse(client, "gpt-4.1-mini", safeHistory);
-        // Recover once from a model-specific rate limit without retrying quota errors.
-        } else if (firstStatus === 429 && (firstCode === "rate_limit_exceeded" || firstType === "rate_limit_exceeded") && model !== "gpt-4.1-mini") {
-          response = await createResponse(client, "gpt-4.1-mini", safeHistory);
-        } else {
-          throw firstError;
-        }
+        const canFallback =
+          configuredModel !== FAST_MODEL &&
+          ((firstStatus === 404 || firstCode === "model_not_found") ||
+            (firstStatus === 429 && (firstCode === "rate_limit_exceeded" || firstType === "rate_limit_exceeded")));
+        if (!canFallback) throw firstError;
+        stream = await streamModel(client, FAST_MODEL, safeHistory);
       }
-
-      const answer = response.output_text?.trim() || "";
-      if (!answer) return NextResponse.json({ error: "Asisten AI tidak menghasilkan jawaban." }, { status: 502 });
-      return NextResponse.json({ answer });
     } catch (error: any) {
       const status = Number(error?.status || error?.statusCode || 0);
       const provider = getProviderError(error);
@@ -108,6 +123,35 @@ export async function POST(request: Request) {
         { status: status >= 400 && status < 600 ? status : 500 }
       );
     }
+
+    const output = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for await (const event of stream) {
+            if (event?.type === "response.output_text.delta" && typeof event.delta === "string") {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "delta", text: event.delta })}\n\n`));
+            } else if (event?.type === "response.completed") {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`));
+            }
+          }
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        } catch (error: any) {
+          const status = Number(error?.status || error?.statusCode || 0);
+          const provider = getProviderError(error);
+          console.error("SALVIAN MUSIC assistant OpenAI stream error", {
+            status: status || 500,
+            code: provider.code || undefined,
+            type: provider.type || undefined,
+            requestId: provider.requestId || undefined,
+          });
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "error", error: classifyOpenAIError(status || 500, error) })}\n\n`));
+          controller.close();
+        }
+      },
+    });
+
+    return makeSse(output);
   } catch (error) {
     console.error("SALVIAN AI MUSIC assistant error", error);
     return NextResponse.json({ error: "Terjadi kesalahan saat menghubungkan ke Asisten AI." }, { status: 500 });
