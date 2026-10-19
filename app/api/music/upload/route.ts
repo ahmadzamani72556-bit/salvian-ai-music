@@ -109,16 +109,12 @@ export async function POST(request: NextRequest) {
         result = await murekaRemixUpload(file);
         stage2RemixId = result.id;
       } else {
-        // CRITICAL: the full-duration Remix upload is the source of truth for
-        // Stage-2. Do it FIRST. A BOP/reference failure must never make the
-        // 10–350s Remix upload appear to have failed.
+        // Full-duration Remix is the source of truth for Stage-2.
         const remixResult = await murekaRemixUpload(file);
         stage2RemixId = remixResult.id;
         result = remixResult;
 
-        // BOP/reference is a secondary 30-second reference path. It is useful
-        // for Stage-1/reference generation, but it is never allowed to cancel
-        // a successful full-duration Remix upload.
+        // BOP/reference remains a secondary 30-second reference path.
         try {
           const referenceResult = await murekaUpload(file, "reference", 30000);
           referenceId = referenceResult.id;
@@ -137,9 +133,14 @@ export async function POST(request: NextRequest) {
 
     if (!result.id || typeof result.id !== "string") throw new Error("Mesin musik tidak mengembalikan ID audio yang dapat digunakan.");
 
+    // The client historically uses `id` to decide whether Stage-2 should use
+    // /api/music/remix. If BOP/reference is unavailable, expose the successful
+    // full-duration Remix ID through `id` as well. The actual reference_id
+    // remains null, while remix_upload_id stays authoritative for Stage-2.
+    const stage2ClientId = referenceId || (purpose === "reference" && stage2RemixId ? stage2RemixId : "");
     const response = NextResponse.json({
       success: true,
-      id: referenceId || (purpose === "remix" ? result.id : ""),
+      id: stage2ClientId || (purpose === "remix" ? result.id : ""),
       reference_id: referenceId || null,
       purpose,
       engine,
