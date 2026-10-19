@@ -97,6 +97,22 @@ async function saveTask(
   });
 }
 
+/**
+ * Build a compact instruction hierarchy for Mureka.
+ *
+ * The three user inputs have distinct jobs and none is allowed to erase the
+ * others:
+ *   1) reference audio = musical source/anchor;
+ *   2) user concept = style, genre, arrangement, instruments, tempo and vocal
+ *      direction requested by the user;
+ *   3) lyrics = exact words to be sung.
+ *
+ * Crucially, we do NOT infer or impose a genre such as dangdut/remix from the
+ * reference. If the user asks for dangdut, use dangdut; if they ask for rock,
+ * pop, Melayu, Minang, electronic, acoustic, a particular vocal character,
+ * etc., follow that request. The reference remains the musical anchor, while
+ * the concept is the user's creative transformation instruction.
+ */
 function buildStrictRemixPrompt(
   prompt: string,
   language: string,
@@ -104,22 +120,29 @@ function buildStrictRemixPrompt(
   instrumental: boolean,
   tempo: number,
 ) {
-  const parts = [
-    "SALVIAN AI STRICT REFERENCE REMIX.",
-    "PRIMARY GOAL: preserve the musical identity of the uploaded reference while creating a new performance with the supplied lyrics.",
-    prompt || "Follow the user's music concept exactly.",
-    `Language: ${language || "Indonesia"}.`,
-    tempo > 0 ? `Target tempo: ${tempo} BPM; keep it consistent with the reference feel unless the reference clearly indicates otherwise.` : "",
-    gender ? `Vocal gender: ${gender}.` : "",
-    instrumental ? "Instrumental only; do not sing." : "",
-    "REFERENCE AUDIO IS THE MUSICAL MASTER: preserve its tempo feel, groove, rhythmic pattern, chord/harmonic movement, melodic contour where appropriate, instrumentation, arrangement, section order, transitions, fills, dynamics, energy and overall production character. Do not turn the reference into a generic genre song.",
-    "CONCEPT IS THE ARRANGEMENT DIRECTION: apply the user's concept on top of the reference without discarding the reference's recognizable musical feel.",
-    "LYRICS ARE LOCKED: sing the supplied lyrics exactly as provided and in the same order. Do not rewrite, paraphrase, summarize, replace, omit, repeat, or invent words. Keep every section marker and line order when possible.",
-    "PHRASING: fit the new lyrics naturally into the reference's musical phrasing and section structure. Change vocal phrasing as needed to accommodate the exact words, but do not change the words themselves.",
-    "OUTPUT: a polished original remix/performance that is clearly guided by the uploaded reference, the user's concept, and the exact supplied lyrics.",
+  const userDirection = [
+    prompt,
+    language ? `Bahasa yang diminta pengguna: ${language}.` : "",
+    gender ? `Karakter/jenis vokal yang diminta pengguna: ${gender}.` : "",
+    tempo > 0 ? `Tempo yang diminta pengguna: ${tempo} BPM.` : "",
+    instrumental ? "Pengguna meminta versi instrumental; jangan menambahkan vokal." : "",
+  ].filter(Boolean).join("\n");
+
+  const instructions = [
+    "SALVIAN AI — REFERENCE-GUIDED REMIX WITH USER CREATIVE CONTROL.",
+    "Use the uploaded reference audio as the primary musical source: preserve its recognizable musical foundation, groove/feel, timing relationships, harmonic movement, section flow, transitions, rhythmic character and production energy where compatible with the user's requested transformation.",
+    "The USER CONCEPT has creative authority over style, genre, arrangement, instrumentation, tempo, vocal character, vocal delivery and other artistic choices. Follow the user's wording exactly. Never impose a genre, remix style, dangdut style, vocal style, tempo or instrumentation that the user did not request.",
+    "Do not classify the reference into a genre and then substitute a generic example of that genre. Do not force 'remix', 'dangdut', or any other preset style. The reference is the source; the user's concept is the requested artistic direction.",
+    "LYRICS ARE LOCKED: sing the supplied lyrics exactly as provided and in the same order. Do not rewrite, paraphrase, summarize, replace, omit, or invent words. Fit vocal phrasing and melody around the exact lyrics.",
+    userDirection,
   ].filter(Boolean);
 
-  return parts.join("\n").slice(0, 1024);
+  // Keep the user's direction intact while leaving enough room for the core
+  // control rules. Mureka accepts a maximum of 1024 characters for prompt.
+  const fixed = instructions.slice(0, 5).join("\n");
+  const remaining = Math.max(0, 1024 - fixed.length - 1);
+  const direction = userDirection.slice(0, remaining);
+  return direction ? `${fixed}\n${direction}` : fixed.slice(0, 1024);
 }
 
 export async function POST(request: NextRequest) {
@@ -137,10 +160,10 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lyrics = text(body.lyrics);
-  const language = text(body.language) || "Indonesia";
+  const language = text(body.language);
   const gender = text(body.gender);
   const instrumental = body.instrumental === true;
-  const prompt = text(body.prompt || body.style).slice(0, 900);
+  const prompt = text(body.prompt || body.style);
   const title = text(body.title) || "Salvian AI Music — Reference Remix";
   const referenceUrl = text(body.reference_url || body.referenceUrl);
   const legacyReferenceId = text(body.reference_id || body.referenceId);
@@ -158,26 +181,14 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // IMPORTANT: When an Audio Referensi exists, use Mureka's REMIX endpoint.
-    // This is the path designed to generate from an uploaded song while
-    // accepting new lyrics + a controlling prompt. The previous implementation
-    // incorrectly converted the audio to purpose=reference and called
-    // /v1/song/generate, which weakened adherence to the actual recording.
     let remixUploadId = suppliedRemixUploadId;
 
-    // The current browser stores the complete audio in Blob first. At Stage-2
-    // we convert that exact URL into a Mureka purpose=remix upload. This keeps
-    // the full source available to Mureka and avoids the browser/Vercel upload
-    // size limit.
     if (!remixUploadId && referenceUrl) {
       const uploaded = await murekaUploadUrl(referenceUrl);
       remixUploadId = uploaded.id;
     }
 
     if (!remixUploadId && legacyReferenceId && !/^https?:\/\//i.test(legacyReferenceId)) {
-      // A legacy reference_id was created with purpose=reference and cannot be
-      // safely passed to /song/remix. Do not silently fall back to the weaker
-      // generation path; ask the client to provide the original audio URL.
       return clearStage2Cookies(NextResponse.json({
         success: false,
         stage: "mureka-strict-reference-remix",
@@ -193,10 +204,6 @@ export async function POST(request: NextRequest) {
       }, { status: 400 }));
     }
 
-    // The strict-reference path deliberately uses Remix rather than the
-    // lyrics-to-song reference_id path. Remix accepts uploaded audio + new
-    // lyrics + prompt together, which is exactly the combination this Studio
-    // needs for strong adherence to the source music.
     const musicPrompt = buildStrictRemixPrompt(prompt, language, gender, instrumental, tempo);
     const musicRequest: Record<string, unknown> = {
       upload_audio_id: remixUploadId,
@@ -271,7 +278,7 @@ export async function POST(request: NextRequest) {
       status,
       librarySaved: true,
       referenceUploadPurpose: "remix",
-      note: "Audio Referensi diproses melalui Mureka Remix penuh; lirik dikunci sebagai input kata; konsep musik dikirim sebagai kontrol aransemen.",
+      note: "Audio Referensi menjadi jangkar musik; konsep pengguna mengendalikan gaya/genre/aransemen/vokal; lirik tetap terkunci persis.",
       provider: providerData,
     }));
   } catch (error) {
