@@ -59,7 +59,16 @@ export default function PremiumMusicStudio() {
   const fileVocal = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const loadLibrary = async (id = workspace) => { if (!id) return; const res = await fetch("/api/projects", { headers: headersFor(id), cache: "no-store" }); const data = await res.json().catch(() => ({})); if (res.ok) { const next = Array.isArray(data.projects) ? data.projects : []; setProjects(next); emitMusicEvent("salvian-music-results-update", { projects: next }); } };
+  const loadLibrary = async (id = workspace): Promise<Project[]> => {
+    if (!id) return [];
+    const res = await fetch("/api/projects", { headers: headersFor(id), cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return [];
+    const next = Array.isArray(data.projects) ? data.projects as Project[] : [];
+    setProjects(next);
+    emitMusicEvent("salvian-music-results-update", { projects: next });
+    return next;
+  };
   useEffect(() => { const id = getWorkspaceId(); setWorkspace(id); void loadLibrary(id); }, []);
   useEffect(() => { const openAssistant = () => setChatOpen(true); window.addEventListener("salvian-open-assistant", openAssistant); return () => window.removeEventListener("salvian-open-assistant", openAssistant); }, []);
   useEffect(() => { if (active === "library") void loadLibrary(); }, [active]);
@@ -77,14 +86,41 @@ export default function PremiumMusicStudio() {
 
   const pollTask = async (taskId: string, endpoint = "/api/music", engine = musicEngine) => {
     if (!workspace || !taskId) return;
+    let activeTaskId = taskId;
+    let missingTaskCount = 0;
     setPolling(true);
     emitMusicEvent("salvian-music-generation-status", { generating: true, status: "Permintaan diterima. Mesin sedang menyiapkan lagu…" });
-    for (let i = 0; i < 40; i++) {
-      await new Promise(r => setTimeout(r, 6000));
+    for (let i = 0; i < 120; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 2500));
       try {
-        const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ action: "status", taskId, musicEngine: engine }) });
+        const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ action: "status", taskId: activeTaskId, musicEngine: engine }) });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Status generasi gagal dibaca.");
+        if (!res.ok) {
+          if (res.status === 404) {
+            const library = await loadLibrary();
+            const exact = library.find(project => project.task_id === activeTaskId);
+            const pending = library.find(project => project.task_id && !project.audio && ["preparing", "queued", "running", "streaming", "finalizing_audio"].includes(String(project.status || "").toLowerCase()));
+            const recovered = exact || pending;
+            if (recovered?.task_id) {
+              activeTaskId = recovered.task_id;
+              missingTaskCount = 0;
+              setNotice("Sinkronisasi task dengan Library diperbaiki. Melanjutkan proses musik…");
+              emitMusicEvent("salvian-music-generation-status", { generating: true, status: "Sinkronisasi task dengan Library diperbaiki. Melanjutkan proses musik…" });
+              continue;
+            }
+            missingTaskCount += 1;
+            if (missingTaskCount >= 2) {
+              const message = "Task musik tidak tersambung ke Library workspace. Proses dihentikan agar tidak berputar berjam-jam.";
+              setPolling(false);
+              setNotice(message);
+              emitMusicEvent("salvian-music-generation-status", { generating: false, failed: true, status: message });
+              return;
+            }
+            continue;
+          }
+          throw new Error(data.error || "Status generasi gagal dibaca.");
+        }
+        missingTaskCount = 0;
         if (data.finished) {
           const finalStatus = data.audio ? `${data.musicEngine || "Musik"} selesai dan tersimpan di Library.` : data.failed ? "Generasi musik gagal." : "Generasi selesai.";
           setNotice(finalStatus);
@@ -118,7 +154,13 @@ export default function PremiumMusicStudio() {
       const endpoint = "/api/music";
       const body = { title, lyrics: lyrics.trim(), style, model: musicEngine === "mureka" ? modelMap[model] : musicEngine, musicEngine, n: 1, stream: true, gender, language, tempo, instrumental, reference_id: referenceId || undefined, vocal_id: vocalId || undefined };
       const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify(body) }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || "Gagal membuat musik.");
-      setNotice(data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.`); emitMusicEvent("salvian-music-generation-status", { generating: Boolean(data.taskId && !data.audio), status: data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.` }); await loadLibrary(); if (data.audio) emitMusicEvent("salvian-music-generation-status", { generating: false, status: `${data.musicEngine || "Musik"} berhasil dibuat.` }); if (data.taskId && !data.audio) void pollTask(String(data.taskId), endpoint, musicEngine);
+      setNotice(data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.`); emitMusicEvent("salvian-music-generation-status", { generating: Boolean(data.taskId && !data.audio), status: data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.` });
+      const library = await loadLibrary();
+      if (data.audio) emitMusicEvent("salvian-music-generation-status", { generating: false, status: `${data.musicEngine || "Musik"} berhasil dibuat.` });
+      if (data.taskId && !data.audio) {
+        const savedProject = library.find(project => project.task_id === String(data.taskId));
+        void pollTask(String(savedProject?.task_id || data.taskId), endpoint, musicEngine);
+      }
     } catch (e) { const message = e instanceof Error ? e.message : "Gagal membuat musik."; setNotice(message); emitMusicEvent("salvian-music-generation-status", { generating: false, failed: true, status: message }); } finally { setBusy(false); }
   };
 
