@@ -1,15 +1,21 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { AudioLines, Bot, Check, ChevronDown, Download, Headphones, Library, MessageCircle, Mic2, Music2, Pause, Play, Send, Settings2, Sparkles, Upload, WandSparkles, X } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { AudioLines, Bot, Check, Download, Headphones, Library, MessageCircle, Mic2, Music2, Pause, Play, Send, Settings2, Sparkles, Upload, WandSparkles, X } from "lucide-react";
 
 type Model = "Standard" | "Pro" | "Adroit";
+type MusicEngine = "mureka" | "eleven_music_v2_5" | "suno_v6";
 type Project = { id: string; title: string; lyrics: string; style: string; model: string; status: string; audio?: string | null; task_id?: string | null; created_at?: string };
 type Chat = { role: "user" | "assistant"; content: string };
 
 const modelMap: Record<Model, string> = { Standard: "auto", Pro: "mureka-9", Adroit: "mureka-9.5" };
 const presets = ["Dangdut Remix", "Slow Rock Melayu", "Sholawat", "Pop Ballad", "DJ Remix", "Timur NTT"];
 const welcome: Chat = { role: "assistant", content: "Halo! Saya Asisten AI SALVIAN AI MUSIC. Saya siap membantu ide lagu, lirik, genre, vokal, prompt, dan penggunaan Studio." };
+const engineCards: { id: MusicEngine; title: string; subtitle: string; points: string[] }[] = [
+  { id: "mureka", title: "Mureka", subtitle: "PRO", points: ["Mesin yang sudah aktif", "Pilih model Mureka di bawah", "Billing: Mureka"] },
+  { id: "eleven_music_v2_5", title: "Eleven Music", subtitle: "ELITE", points: ["Music v2.5", "Studio-grade generation", "Billing: Eleven Elite"] },
+  { id: "suno_v6", title: "Suno", subtitle: "ULTIMATE", points: ["Suno v6", "Flagship music model", "Billing: Suno Ultimate"] },
+];
 
 function getWorkspaceId() {
   if (typeof window === "undefined") return "";
@@ -25,6 +31,7 @@ function headersFor(workspace: string, json = false) {
 
 export default function PremiumMusicStudio() {
   const [workspace, setWorkspace] = useState("");
+  const [musicEngine, setMusicEngine] = useState<MusicEngine>("mureka");
   const [model, setModel] = useState<Model>("Pro");
   const [prompt, setPrompt] = useState("");
   const [lyrics, setLyrics] = useState("");
@@ -76,16 +83,16 @@ export default function PremiumMusicStudio() {
     } catch (e) { setNotice(e instanceof Error ? e.message : "Upload gagal."); } finally { setBusy(false); }
   };
 
-  const pollTask = async (taskId: string, endpoint = "/api/music") => {
+  const pollTask = async (taskId: string, endpoint = "/api/music", engine = musicEngine) => {
     if (!workspace || !taskId) return;
     setPolling(true);
     for (let i = 0; i < 40; i++) {
       await new Promise(r => setTimeout(r, 6000));
       try {
-        const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ action: "status", taskId }) });
+        const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify({ action: "status", taskId, musicEngine: engine }) });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || "Status generasi gagal dibaca.");
-        if (data.finished) { setNotice(data.audio ? "Musik selesai dan tersimpan di Library." : data.failed ? "Generasi musik gagal." : "Generasi selesai."); await loadLibrary(); setPolling(false); return; }
+        if (data.finished) { setNotice(data.audio ? `${data.musicEngine || "Musik"} selesai dan tersimpan di Library.` : data.failed ? "Generasi musik gagal." : "Generasi selesai."); await loadLibrary(); setPolling(false); return; }
         setNotice(`Musik sedang dibuat… ${data.status || "diproses"}`);
       } catch (e) { setNotice(e instanceof Error ? e.message : "Status generasi gagal dibaca."); }
     }
@@ -95,18 +102,18 @@ export default function PremiumMusicStudio() {
   const generate = async () => {
     if (!workspace) return;
     if (!lyrics.trim() && !instrumental) { setNotice("Masukkan lirik atau aktifkan mode instrumental."); return; }
-    setBusy(true); setNotice("Mengirim karya ke mesin musik AI…");
+    setBusy(true); setNotice(`Mengirim karya ke ${engineCards.find(e => e.id === musicEngine)?.title || "mesin musik"}…`);
     try {
-      const title = (lyrics.split("\n").find(Boolean) || `${model} Music`).replace(/^\[.*?\]\s*/, "").slice(0, 70);
+      const title = (lyrics.split("\n").find(Boolean) || `${musicEngine} Music`).replace(/^\[.*?\]\s*/, "").slice(0, 70);
       const style = `${prompt.slice(0, 900)}${prompt ? ", " : ""}${language}, ${tempo} BPM, ${gender} vocal`;
-      const endpoint = instrumental ? "/api/music/instrumental" : "/api/music";
-      const body = instrumental ? { title, prompt: style, model: modelMap[model] } : { title, lyrics: lyrics.trim(), style, model: modelMap[model], n: 1, stream: true, gender, reference_id: referenceId || undefined, vocal_id: vocalId || undefined };
+      const endpoint = "/api/music";
+      const body = { title, lyrics: lyrics.trim(), style, model: musicEngine === "mureka" ? modelMap[model] : musicEngine, musicEngine, n: 1, stream: true, gender, language, tempo, instrumental, reference_id: referenceId || undefined, vocal_id: vocalId || undefined };
       const res = await fetch(endpoint, { method: "POST", headers: headersFor(workspace, true), body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Gagal membuat musik.");
-      setNotice(data.audio ? "Musik berhasil dibuat." : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.`);
+      setNotice(data.audio ? `${data.musicEngine || "Musik"} berhasil dibuat.` : `Permintaan diterima. Task ID: ${data.taskId || "diproses"}.`);
       await loadLibrary();
-      if (data.taskId && !data.audio) void pollTask(String(data.taskId), endpoint);
+      if (data.taskId && !data.audio) void pollTask(String(data.taskId), endpoint, musicEngine);
     } catch (e) { setNotice(e instanceof Error ? e.message : "Gagal membuat musik."); } finally { setBusy(false); }
   };
 
@@ -137,8 +144,9 @@ export default function PremiumMusicStudio() {
   };
   const togglePlay = (url: string) => { if (playing === url) { audioRef.current?.pause(); setPlaying(null); return; } audioRef.current?.pause(); const audio = new Audio(url); audioRef.current = audio; setPlaying(url); audio.play().catch(() => setNotice("Audio tidak dapat diputar di perangkat ini.")); audio.onended = () => setPlaying(null); };
   const nav = [["studio", "Studio Musik", Music2], ["assistant", "Asisten AI", Bot], ["library", "Library", Library], ["models", "Model AI", Sparkles], ["style", "Style & Genre", AudioLines], ["voice", "Voice & Vocal", Mic2], ["reference", "Audio Referensi", Headphones]] as const;
-  const modelCards: { id: Model; title: string; points: string[] }[] = [{ id: "Standard", title: "Cepat & Efisien", points: ["Kualitas baik", "Ide cepat", "Model auto"] }, { id: "Pro", title: "Kualitas Lebih Tinggi", points: ["Audio jernih", "Struktur detail", "Mureka 9"] }, { id: "Adroit", title: "Model Paling Elite", points: ["Aransemen kompleks", "Kualitas premium", "Mureka 9.5"] }];
-  const statusLabel = useMemo(() => polling ? "Mesin musik sedang bekerja…" : notice, [polling, notice]);
+  const modelCards: { id: Model; title: string; points: string[] }[] = [{ id: "Standard", title: "Cepat & Efisien", points: ["Kualitas baik", "Ide cepat", "Mureka auto"] }, { id: "Pro", title: "Kualitas Lebih Tinggi", points: ["Audio jernih", "Struktur detail", "Mureka 9"] }, { id: "Adroit", title: "Model Paling Elite", points: ["Aransemen kompleks", "Kualitas premium", "Mureka 9.5"] }];
+  const selectedEngine = engineCards.find(e => e.id === musicEngine)!;
+  const statusLabel = useMemo(() => polling ? `Mesin ${selectedEngine.title} sedang bekerja…` : notice, [polling, notice, selectedEngine.title]);
 
   return <div className="min-h-screen bg-[#02030a] text-white" data-premium-studio>
     <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_75%_5%,rgba(168,85,247,.16),transparent_30%),radial-gradient(circle_at_20%_80%,rgba(37,99,235,.12),transparent_32%)]" />
@@ -151,7 +159,7 @@ export default function PremiumMusicStudio() {
       <main className="min-w-0 flex-1 overflow-y-auto pb-24">
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-white/10 bg-[#05050c]/85 px-4 py-4 backdrop-blur-xl sm:px-7"><div className="flex items-center gap-2"><img src="/salvian-ai-logo.svg" alt="SALVIAN AI" className="h-9 w-9 rounded-xl"/><div><div className="font-black">SALVIAN <span className="text-violet-300">AI</span></div><div className="text-[8px] tracking-[.3em] text-zinc-500">MUSIC STUDIO</div></div></div><button onClick={() => setChatOpen(true)} className="rounded-2xl border border-violet-400/25 bg-violet-500/10 px-3 py-2 text-sm font-bold text-violet-100"><MessageCircle size={17} className="inline mr-2"/>Asisten AI</button></header>
         <div className="mx-auto w-full max-w-6xl p-4 sm:p-7">
-          <div className="mb-7 flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.3em] text-violet-300">Music Creator</p><h1 className="mt-2 text-3xl font-black sm:text-4xl">Studio Musik AI</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">Buat lagu, instrumental, vokal AI, lirik, dan simpan hasilnya di Library Music.</p></div><div className="rounded-2xl border border-white/10 bg-white/[.03] px-4 py-3 text-xs text-zinc-500">Workspace Music lokal aktif</div></div>
+          <div className="mb-7 flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.3em] text-violet-300">Music Creator</p><h1 className="mt-2 text-3xl font-black sm:text-4xl">Studio Musik AI</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">Buat lagu, instrumental, vokal AI, lirik, dan simpan hasilnya di Library Music.</p></div><div className="rounded-2xl border border-white/10 bg-white/[.03] px-4 py-3 text-xs text-zinc-500">Mesin aktif: <span className="font-bold text-violet-200">{selectedEngine.title} {selectedEngine.subtitle}</span></div></div>
           {statusLabel && <div className="mb-5 rounded-2xl border border-violet-400/15 bg-violet-500/5 px-4 py-3 text-sm text-violet-100">{statusLabel}</div>}
           {active === "studio" && <section className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
             <div className="space-y-5">
@@ -159,13 +167,14 @@ export default function PremiumMusicStudio() {
               <div className="rounded-3xl border border-white/10 bg-white/[.035] p-5 sm:p-7"><div className="flex items-center justify-between"><div><h2 className="text-lg font-extrabold">Lirik</h2><p className="text-xs text-zinc-500">Tulis sendiri atau biarkan Lirik Assistant membuat draft original.</p></div><button disabled={lyricBusy} onClick={generateLyrics} className="rounded-xl bg-violet-600 px-3 py-2 text-xs font-bold disabled:opacity-40"><WandSparkles size={14} className="inline mr-1"/>{lyricBusy ? "Membuat…" : "Buat Lirik AI"}</button></div><textarea value={lyrics} onChange={e => setLyrics(e.target.value)} rows={12} placeholder={instrumental ? "Mode instrumental aktif — lirik tidak diperlukan." : "[Verse]\nTulis lirik lagu di sini…"} disabled={instrumental} className="mt-4 w-full resize-none rounded-2xl border border-white/10 bg-black/20 p-4 font-mono text-sm leading-6 text-white outline-none placeholder:text-zinc-600 disabled:opacity-40"/></div>
             </div>
             <div className="space-y-5">
-              <div className="rounded-3xl border border-white/10 bg-white/[.035] p-5"><h2 className="text-lg font-extrabold">Model AI</h2><div className="mt-3 space-y-2">{modelCards.map(card => <button key={card.id} onClick={() => setModel(card.id)} className={`w-full rounded-2xl border p-4 text-left ${model === card.id ? "border-violet-400/50 bg-violet-500/10" : "border-white/10 bg-black/10"}`}><div className="flex justify-between"><span className="font-bold">{card.id}</span>{model === card.id && <Check size={17} className="text-violet-300"/>}</div><p className="mt-1 text-xs text-zinc-500">{card.title}</p><p className="mt-2 text-[11px] text-zinc-600">{card.points.join(" • ")}</p></button>)}</div></div>
+              <div className="rounded-3xl border border-white/10 bg-white/[.035] p-5"><div className="flex items-center justify-between"><div><h2 className="text-lg font-extrabold">Mesin Musik</h2><p className="text-xs text-zinc-500">Pilih mesin sebelum menekan Buat Musik.</p></div><Sparkles className="text-violet-300"/></div><div className="mt-3 space-y-2">{engineCards.map(card => <button key={card.id} onClick={() => setMusicEngine(card.id)} className={`w-full rounded-2xl border p-4 text-left ${musicEngine === card.id ? "border-violet-400/50 bg-violet-500/10" : "border-white/10 bg-black/10"}`}><div className="flex justify-between"><span className="font-bold">{card.title} <span className="ml-1 text-[10px] tracking-[.18em] text-violet-300">{card.subtitle}</span></span>{musicEngine === card.id && <Check size={17} className="text-violet-300"/>}</div><p className="mt-2 text-[11px] text-zinc-600">{card.points.join(" • ")}</p></button>)}</div></div>
+              {musicEngine === "mureka" && <div className="rounded-3xl border border-white/10 bg-white/[.035] p-5"><h2 className="text-lg font-extrabold">Model Mureka</h2><div className="mt-3 space-y-2">{modelCards.map(card => <button key={card.id} onClick={() => setModel(card.id)} className={`w-full rounded-2xl border p-4 text-left ${model === card.id ? "border-violet-400/50 bg-violet-500/10" : "border-white/10 bg-black/10"}`}><div className="flex justify-between"><span className="font-bold">{card.id}</span>{model === card.id && <Check size={17} className="text-violet-300"/>}</div><p className="mt-1 text-xs text-zinc-500">{card.title}</p><p className="mt-2 text-[11px] text-zinc-600">{card.points.join(" • ")}</p></button>)}</div></div>}
               <div className="rounded-3xl border border-white/10 bg-white/[.035] p-5"><div className="flex items-center justify-between"><h2 className="text-lg font-extrabold">Kontrol</h2><button onClick={() => setAdvancedOpen(v => !v)}><Settings2 size={18}/></button></div><label className="mt-4 flex items-center justify-between rounded-2xl bg-black/20 p-3 text-sm"><span>Instrumental</span><input type="checkbox" checked={instrumental} onChange={e => setInstrumental(e.target.checked)} /></label>{advancedOpen && <div className="mt-3 space-y-3"><label className="block text-xs text-zinc-500">Bahasa<select value={language} onChange={e => setLanguage(e.target.value)} className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 p-3 text-white"><option>Indonesia</option><option>Melayu</option><option>English</option></select></label><label className="block text-xs text-zinc-500">Vokal<select value={gender} onChange={e => setGender(e.target.value)} className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 p-3 text-white"><option value="female">Female</option><option value="male">Male</option></select></label><label className="block text-xs text-zinc-500">Tempo: {tempo} BPM<input type="range" min="60" max="180" value={tempo} onChange={e => setTempo(Number(e.target.value))} className="mt-2 w-full"/></label></div>}</div>
-              <button disabled={busy || polling} onClick={generate} className="w-full rounded-3xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-5 py-4 text-base font-black shadow-2xl shadow-violet-950/30 disabled:opacity-40"><Music2 size={19} className="inline mr-2"/>{polling ? "Musik sedang dibuat…" : busy ? "Mengirim…" : "Buat Musik"}</button>
+              <button disabled={busy || polling} onClick={generate} className="w-full rounded-3xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-5 py-4 text-base font-black shadow-2xl shadow-violet-950/30 disabled:opacity-40"><Music2 size={19} className="inline mr-2"/>{polling ? `Musik ${selectedEngine.title} sedang dibuat…` : busy ? "Mengirim…" : `Buat Musik · ${selectedEngine.title}`}</button>
             </div>
           </section>}
 
-          {active === "models" && <section><h2 className="mb-5 text-2xl font-black">Model AI</h2><div className="grid gap-4 md:grid-cols-3">{modelCards.map(card => <button key={card.id} onClick={() => { setModel(card.id); setActive("studio"); }} className={`rounded-3xl border p-6 text-left ${model === card.id ? "border-violet-400/50 bg-violet-500/10" : "border-white/10 bg-white/[.03]"}`}><Sparkles className="text-violet-300"/><h3 className="mt-4 text-xl font-black">{card.id}</h3><p className="mt-2 text-sm text-zinc-500">{card.title}</p><p className="mt-5 text-xs leading-6 text-zinc-600">{card.points.join("\n")}</p></button>)}</div></section>}
+          {active === "models" && <section><h2 className="mb-5 text-2xl font-black">Mesin Musik</h2><div className="grid gap-4 md:grid-cols-3">{engineCards.map(card => <button key={card.id} onClick={() => { setMusicEngine(card.id); setActive("studio"); }} className={`rounded-3xl border p-6 text-left ${musicEngine === card.id ? "border-violet-400/50 bg-violet-500/10" : "border-white/10 bg-white/[.03]"}`}><Sparkles className="text-violet-300"/><h3 className="mt-4 text-xl font-black">{card.title} <span className="text-xs tracking-[.18em] text-violet-300">{card.subtitle}</span></h3><p className="mt-2 text-sm text-zinc-500">{card.points.join(" • ")}</p></button>)}</div></section>}
           {active === "style" && <section><h2 className="text-2xl font-black">Style & Genre</h2><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">{presets.map(p => <button key={p} onClick={() => { setPrompt(p); setActive("studio"); }} className="rounded-2xl border border-white/10 bg-white/[.03] p-5 text-left font-bold hover:border-violet-400/30">{p}<p className="mt-1 text-xs font-normal text-zinc-600">Gunakan sebagai konsep lagu</p></button>)}</div></section>}
           {active === "voice" && <section className="rounded-3xl border border-white/10 bg-white/[.03] p-6"><h2 className="text-2xl font-black">Voice & Vocal</h2><p className="mt-2 text-sm text-zinc-500">Upload audio vokal untuk membuat karakter vokal AI.</p><input ref={fileVocal} type="file" accept=".mp3,.m4a" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) void uploadFile(f, "voice"); }}/><button onClick={() => fileVocal.current?.click()} className="mt-6 rounded-2xl bg-violet-600 px-5 py-3 font-bold"><Upload size={17} className="inline mr-2"/>Upload Vocal</button>{vocalName && <p className="mt-4 text-sm text-zinc-400">{vocalName} {vocalId && "✓ siap"}</p>}</section>}
           {active === "reference" && <section className="rounded-3xl border border-white/10 bg-white/[.03] p-6"><h2 className="text-2xl font-black">Audio Referensi</h2><p className="mt-2 text-sm text-zinc-500">Gunakan MP3/M4A sebagai referensi musik.</p><input ref={fileReference} type="file" accept=".mp3,.m4a" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) void uploadFile(f, "reference"); }}/><button onClick={() => fileReference.current?.click()} className="mt-6 rounded-2xl bg-violet-600 px-5 py-3 font-bold"><Upload size={17} className="inline mr-2"/>Upload Referensi</button>{referenceName && <p className="mt-4 text-sm text-zinc-400">{referenceName} {referenceId && "✓ siap"}</p>}</section>}
