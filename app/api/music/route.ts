@@ -144,14 +144,24 @@ function buildUserMusicDirective(body: Record<string, unknown>, provider: "murek
   const tempo = Number(body.tempo || 0);
   const gender = String(body.gender || "").trim();
   const instrumental = body.instrumental === true;
+  const referenceId = String(body.reference_id || "").trim();
+  const vocalId = String(body.vocal_id || "").trim();
+  const targetDurationMs = Number(body.reference_duration_ms || 0);
+  const targetDuration = Number.isFinite(targetDurationMs) && targetDurationMs >= 10000
+    ? `${Math.round(targetDurationMs / 1000)} seconds`
+    : "";
   const parts = [
-    "USER MUSIC CONCEPT — HIGHEST PRIORITY:",
+    "SALVIAN AI MUSIC — USER MUSIC DIRECTIVE. Treat this directive as the source of truth.",
     rawStyle || "Create the music according to the user's other controls.",
     `Language: ${language}.`,
-    tempo > 0 ? `Tempo: ${tempo} BPM.` : "",
-    gender ? `Preferred vocal: ${gender}.` : "",
+    tempo > 0 ? `Target tempo: ${tempo} BPM.` : "",
+    gender ? `Preferred vocal gender: ${gender}.` : "",
     instrumental ? "Instrumental only; no vocals." : "",
-    "Follow the user's concept literally and musically. Do not replace the requested genre, culture, era, rhythm, instrumentation, mood, vocal character, or production style with a generic alternative. If multiple genres/styles are requested, preserve the requested blend rather than choosing only one.",
+    referenceId ? "AUDIO REFERENCE ACTIVE: use the reference as the primary musical guide for groove, rhythm, harmonic feel, instrumentation, arrangement, section pacing, dynamics and production character. Keep the new lyrics independent from the reference lyrics. Preserve the reference's recognizable musical character while creating an original result." : "",
+    vocalId ? "VOICE/VOCAL REFERENCE ACTIVE: use the uploaded vocal clone as the primary vocal identity and timbre. Preserve its recognizable vocal character and delivery quality. The preferred gender is only a secondary preference when a vocal reference is active." : "",
+    referenceId && vocalId ? "REFERENCE + VOCAL MODE: combine the reference music direction with the selected vocal identity. Do not replace either one with a generic voice or generic arrangement. The supplied lyrics may be completely different from the reference while the musical style and vocal character remain guided by the references." : "",
+    targetDuration ? `Target song duration: approximately ${targetDuration}. Keep the overall musical pacing and ending close to the reference duration when the model supports duration control.` : "",
+    "Follow the user's requested genre, culture, era, rhythm, instruments, mood, vocal character and production details literally. If several styles are requested, preserve the requested blend instead of choosing a generic alternative. Do not copy protected lyrics or claim to reproduce an artist identity.",
   ].filter(Boolean);
   const joined = parts.join("\n");
   return provider === "mureka" ? joined.slice(0, 1024) : joined;
@@ -257,8 +267,6 @@ export async function POST(request: NextRequest) {
         let providerStatus = findStatus(q.data);
         const failed = failure(providerStatus);
         let audio = failed ? null : findAudio(q.data);
-        // Mureka can briefly report `succeeded` before the choices/audio URL is
-        // available in the query response. Do not close the task early in that case.
         if (!failed && providerStatus === "succeeded" && !audio) {
           await new Promise(resolve => setTimeout(resolve, 800));
           const retry = await mureka(`/v1/song/query/${encodeURIComponent(taskId)}`);
@@ -337,12 +345,17 @@ export async function POST(request: NextRequest) {
     const model = MUREKA_MODELS.has(requestedModel) ? requestedModel : "mureka-9.5";
     const requestedN = Number(body.n);
     const n = Number.isFinite(requestedN) ? Math.min(Math.max(Math.floor(requestedN), 1), 3) : 1;
+    const referenceId = typeof body.reference_id === "string" ? body.reference_id.trim() : "";
+    const vocalId = typeof body.vocal_id === "string" ? body.vocal_id.trim() : "";
+    if (model === "mureka-o2" && (vocalId || body.melody_id)) {
+      return NextResponse.json({ success: false, error: "Model Mureka O2 tidak mendukung Voice & Vocal atau Melody Reference. Pilih Standard, Pro, atau Adroit untuk tahap 2." }, { status: 400 });
+    }
     const musicRequest: ProviderData = { lyrics: lyrics.slice(0, 5000), model, n, stream: body.stream === true && body.disable_stream !== true };
-    if (style) musicRequest.prompt = buildUserMusicDirective(body, "mureka");
+    if (style || referenceId || vocalId) musicRequest.prompt = buildUserMusicDirective(body, "mureka");
     const gender = String(body.gender || "").toLowerCase();
     if (gender === "female" || gender === "male") musicRequest.gender = gender;
-    if (body.reference_id) musicRequest.reference_id = String(body.reference_id);
-    if (body.vocal_id) musicRequest.vocal_id = String(body.vocal_id);
+    if (referenceId) musicRequest.reference_id = referenceId;
+    if (vocalId) musicRequest.vocal_id = vocalId;
     if (body.melody_id) musicRequest.melody_id = String(body.melody_id);
     const generated = await mureka("/v1/song/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(musicRequest) });
     if (!generated.response.ok) return NextResponse.json({ success: false, error: generated.data?.error?.message || generated.data?.message || generated.data?.error || `Mureka API ${generated.response.status}`, data: generated.data }, { status: generated.response.status });
@@ -352,7 +365,25 @@ export async function POST(request: NextRequest) {
     const finished = failure(providerStatus) || Boolean(findAudio(generated.data));
     const failed = failure(providerStatus);
     const audio = finished && !failed ? findAudio(generated.data) : null;
-    const saved = await saveProject(userId, { title, lyrics, style, model, musicEngine: engine, taskId, status: providerStatus, audioUrl: audio, providerData: { musicEngine: engine, billingProvider: billingProvider(engine), data: generated.data } });
+    const saved = await saveProject(userId, {
+      title,
+      lyrics,
+      style,
+      model,
+      musicEngine: engine,
+      taskId,
+      status: providerStatus,
+      audioUrl: audio,
+      providerData: {
+        musicEngine: engine,
+        billingProvider: billingProvider(engine),
+        stage: referenceId || vocalId ? "stage2-reference-vocal" : "stage1-text",
+        hasReference: Boolean(referenceId),
+        hasVoice: Boolean(vocalId),
+        targetReferenceDurationMs: Number(body.reference_duration_ms || 0) || null,
+        data: generated.data,
+      },
+    });
     if (!saved.ok) return NextResponse.json({ success: false, error: "Task berhasil dibuat tetapi Library gagal menyimpan task.", taskId, librarySaved: false }, { status: 503 });
     return NextResponse.json({ success: true, title, taskId, status: providerStatus, musicEngine: engine, billingProvider: billingProvider(engine), audio, librarySaved: true, finished, data: generated.data });
   } catch (error) {
