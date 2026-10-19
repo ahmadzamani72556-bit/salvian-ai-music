@@ -8,30 +8,40 @@ Anda adalah asisten percakapan serbaguna yang membantu pengguna dengan bahasa In
 SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, atau billing sendiri. Jangan meminta pengguna login, jangan membahas saldo/kredit/pembayaran, dan jangan mengarahkan pengguna ke halaman akun.
 Jangan pernah meminta password, API key, token, atau data rahasia. Jangan mengklaim dapat mengubah akun atau data pengguna secara langsung. Jangan meniru lirik berhak cipta atau mengklaim mengeksekusi tindakan yang tidak benar-benar dilakukan.`;
 
-// Free-tier Gemini model. This route does not call OpenAI.
+// Gemini Flash-Lite dipakai untuk Asisten AI agar tidak bergantung pada OpenAI.
+// Ketersediaan biaya/gratis tetap mengikuti quota akun Google yang menyediakan API key.
 const GEMINI_MODEL = "gemini-2.5-flash-lite";
 const MAX_HISTORY_MESSAGES = 4;
 const MAX_HISTORY_CHARS = 1800;
 const MAX_OUTPUT_TOKENS = 650;
-const REQUEST_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = 12000;
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
+type RawChatMessage = { role?: unknown; content?: unknown };
+
 function normalizeHistory(history: unknown[], message: string): ChatMessage[] {
-  const safe = history
-    .filter((item: unknown) => {
-      if (!item || typeof item !== "object") return false;
-      const value = item as { role?: unknown; content?: unknown };
-      return (value.role === "user" || value.role === "assistant") && typeof value.content === "string";
-    })
-    .slice(-MAX_HISTORY_MESSAGES)
-    .map((item: { role: "user" | "assistant"; content: string }) => ({
-      role: item.role,
-      content: item.content.slice(0, MAX_HISTORY_CHARS),
-    }));
+  const safe: ChatMessage[] = [];
+
+  for (const item of history) {
+    if (!item || typeof item !== "object") continue;
+
+    const value = item as RawChatMessage;
+    if (
+      (value.role !== "user" && value.role !== "assistant") ||
+      typeof value.content !== "string"
+    ) {
+      continue;
+    }
+
+    safe.push({
+      role: value.role,
+      content: value.content.slice(0, MAX_HISTORY_CHARS),
+    });
+  }
 
   safe.push({ role: "user", content: message });
-  return safe;
+  return safe.slice(-MAX_HISTORY_MESSAGES);
 }
 
 function toGeminiContents(history: ChatMessage[]) {
@@ -48,7 +58,7 @@ function classifyGeminiError(status: number, data: any) {
   if (status === 400) return "Permintaan Asisten AI tidak valid.";
   if (status === 401 || status === 403) return "Kunci Gemini untuk Asisten AI tidak valid atau tidak memiliki akses.";
   if (status === 404) return "Model Gemini Asisten AI tidak tersedia.";
-  if (status === 429) return "Batas penggunaan gratis Gemini sedang tercapai. Coba lagi beberapa saat lagi.";
+  if (status === 429) return "Batas penggunaan Gemini sedang tercapai. Coba lagi beberapa saat lagi.";
   if (status === 408 || status === 504) return "Asisten AI terlalu lama merespons. Coba lagi.";
 
   return `Layanan Asisten AI bermasalah (HTTP ${status}${providerStatus ? `, ${providerStatus}` : ""}${message ? `: ${message.slice(0, 160)}` : ""}).`;
