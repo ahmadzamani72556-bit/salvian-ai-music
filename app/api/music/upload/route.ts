@@ -43,6 +43,7 @@ async function murekaVocal(file: File) {
   if (!id) throw new Error("Mureka tidak mengembalikan Vocal ID.");
   return { id: String(id), data };
 }
+
 async function elevenUpload(file: File) {
   if (!ELEVEN_API_KEY) throw new Error("ELEVEN_API_KEY / ELEVENLABS_API_KEY belum tersedia di Vercel.");
   const form = new FormData(); form.append("file", file, file.name); form.append("extract_composition_plan", "music_v2_5");
@@ -53,9 +54,10 @@ async function elevenUpload(file: File) {
   if (!id) throw new Error("Eleven Music tidak mengembalikan song_id untuk audio referensi.");
   return { id: String(id), data };
 }
+
 async function sunoUpload(file: File, purpose: "reference" | "voice") {
   if (!SUNO_API_KEY) throw new Error("SUNO_API_KEY belum tersedia di Vercel.");
-  const form = new FormData(); form.append("file", file, file.name); form.append("file_name", file.name); form.append("model", "suno-v6");
+  const form = new FormData(); form.append("file", file); form.append("file_name", file.name); form.append("model", "suno-v6");
   let path = "/api/music/upload-source";
   form.append("upload_type", "file_upload");
   if (purpose === "voice") { path = "/api/music/voice-profile/create"; form.append("title", file.name.replace(/\.[^.]+$/, "").slice(0, 80)); form.append("source_kind", "upload"); }
@@ -103,8 +105,7 @@ export async function POST(request: NextRequest) {
         // Keep the existing 30-second reference upload for Stage 1.
         result = await murekaUpload(file, "reference");
         // Also upload the same original file with purpose=remix. This is the
-        // authoritative full-duration source for Stage 2; no Blob round-trip
-        // is needed, so a newly uploaded file cannot disappear from storage.
+        // authoritative full-duration source for Stage 2.
         const remix = await murekaUpload(file, "remix");
         stage2RemixId = remix.id;
       }
@@ -122,13 +123,16 @@ export async function POST(request: NextRequest) {
       engine,
       stage2Reference: Boolean(stage2RemixId),
       stage2Ready: Boolean(stage2RemixId),
+      // Returned for diagnostics/fallback; the browser does not need to store
+      // the ID because the preferred path remains the short-lived HttpOnly cookie.
+      remix_upload_id: stage2RemixId || null,
       data: result.data,
     });
 
-    if (stage2RemixId && workspace && engine === "mureka" && purpose === "reference") {
-      // The client already stores the normal reference ID. This short-lived
-      // server cookie carries the full-duration Remix upload ID into the next
-      // /api/music generation request without exposing it to browser JS.
+    if (stage2RemixId && engine === "mureka" && purpose === "reference") {
+      // Do not depend on the workspace header for cookie creation. The upload
+      // itself has already succeeded and this cookie is the one-shot bridge
+      // used by middleware for the next /api/music generation request.
       response.cookies.set("salvian_stage2_pending", "1", stage2CookieOptions());
       response.cookies.set("salvian_stage2_remix_id", stage2RemixId, stage2CookieOptions());
     }
