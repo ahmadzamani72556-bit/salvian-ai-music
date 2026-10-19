@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Audio reference/remix uploads can be large on mobile connections. Do not
+// fail the request at 60s while Mureka is still receiving the file.
+export const maxDuration = 300;
 
 const MUREKA_BASE_URL = (process.env.MUREKA_BASE_URL || "https://api.mureka.ai").replace(/\/$/, "");
 const MUREKA_API_KEY = process.env.MUREKA_API_KEY || process.env.MUSIC_API_KEY;
@@ -109,26 +111,22 @@ export async function POST(request: NextRequest) {
         result = await murekaUpload(file, "remix");
         stage2RemixId = result.id;
       } else {
-        // Keep BOP/reference and full-duration Remix as two independent paths.
-        // A failure of the BOP/reference upload must NOT discard a valid Remix
-        // upload. This is essential for full songs using the 10–350 second path.
-        const [referenceResult, remixResult] = await Promise.allSettled([
-          murekaUpload(file, "reference"),
-          murekaUpload(file, "remix"),
-        ]);
+        // The full-duration Remix path is the critical Stage-2 path.
+        // Upload it FIRST so two simultaneous 10 MB requests cannot compete
+        // for a mobile connection and cause the Remix upload to time out.
+        // BOP/reference is still preserved and attempted afterwards.
+        const remixResult = await murekaUpload(file, "remix");
+        stage2RemixId = remixResult.id;
+        result = remixResult;
 
-        if (remixResult.status === "rejected") {
-          throw new Error(remixResult.reason instanceof Error ? remixResult.reason.message : "Upload Remix penuh gagal.");
-        }
-
-        stage2RemixId = remixResult.value.id;
-        result = remixResult.value;
-
-        if (referenceResult.status === "fulfilled") {
-          referenceId = referenceResult.value.id;
-        } else {
-          referenceWarning = referenceResult.reason instanceof Error
-            ? referenceResult.reason.message
+        // Preserve the established BOP/reference path. Its failure must never
+        // invalidate a successful 10–350 second Remix upload.
+        try {
+          const referenceResult = await murekaUpload(file, "reference");
+          referenceId = referenceResult.id;
+        } catch (error) {
+          referenceWarning = error instanceof Error
+            ? error.message
             : "Upload BOP/reference gagal, tetapi upload Remix penuh berhasil.";
         }
       }
