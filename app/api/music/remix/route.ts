@@ -49,12 +49,21 @@ export async function POST(request: NextRequest) {
   const title = text(body.title) || "Salvian AI Music — Reference Remix";
   const referenceId = text(body.reference_id || body.referenceId);
   const vocalId = text(body.vocal_id || body.vocalId);
+  const bodyRemixUploadId = text(body.remix_upload_id || body.remixUploadId || body.stage2_remix_id);
+  const cookieRemixUploadId = text(request.cookies.get("salvian_stage2_remix_id")?.value);
+  const remixUploadId = bodyRemixUploadId || cookieRemixUploadId;
   const nRaw = Number(body.n || 1);
   const n = Number.isFinite(nRaw) ? Math.min(3, Math.max(1, Math.floor(nRaw))) : 1;
 
   if (!lyrics) return clearStage2Cookies(NextResponse.json({ success: false, error: "Lirik baru wajib diisi." }, { status: 400 }));
   if (lyrics.length > 5000) return clearStage2Cookies(NextResponse.json({ success: false, error: "Lirik maksimal 5000 karakter." }, { status: 400 }));
-  if (!referenceId) return clearStage2Cookies(NextResponse.json({ success: false, error: "Audio Referensi belum memiliki Reference ID Mureka. Upload Referensi lagi." }, { status: 400 }));
+
+  // Full-duration Stage-2 Remix does NOT need the normal 30-second Reference ID.
+  // It uses the dedicated Mureka purpose=remix upload ID saved by /api/music/upload.
+  // This check must therefore happen only for the Voice & Vocal branch.
+  if (vocalId && !referenceId) {
+    return clearStage2Cookies(NextResponse.json({ success: false, error: "Audio Referensi belum memiliki Reference ID Mureka untuk mode Reference + Voice/Vocal. Upload Referensi lagi." }, { status: 400 }));
+  }
 
   const defaultPrompt = "Pertahankan karakter Audio Referensi: groove, ritme, harmoni, instrumen, aransemen, dinamika, pacing, nuansa produksi, dan struktur musik. Gunakan lirik baru secara independen dan hasilkan lagu original. Jika menggunakan Remix penuh, pertahankan alur dan durasi sumber sedekat mungkin dengan kemampuan model.";
   const remixPrompt = (prompt || defaultPrompt).slice(0, 1024);
@@ -67,8 +76,7 @@ export async function POST(request: NextRequest) {
     if (vocalId) {
       // Mureka's Remix endpoint has no vocal_id field. When both controls are
       // supplied, use the documented generate endpoint so reference_id +
-      // vocal_id remain functional. The normal reference path is 30 seconds;
-      // full-duration Remix is used when no vocal clone is requested.
+      // vocal_id remain functional. The normal reference path is 30 seconds.
       mode = "mureka-reference-vocal";
       providerResponse = await fetch(`${MUREKA_BASE_URL}/v1/song/generate`, {
         method: "POST",
@@ -86,10 +94,10 @@ export async function POST(request: NextRequest) {
       });
       providerData = await readJson(providerResponse);
     } else {
-      const remixUploadId = text(request.cookies.get("salvian_stage2_remix_id")?.value);
       if (!remixUploadId) {
-        return clearStage2Cookies(NextResponse.json({ success: false, error: "Audio Referensi Remix tidak ditemukan. Upload Audio Referensi baru sekali lagi agar file penuh tersimpan langsung di Mureka." }, { status: 400 }));
+        return clearStage2Cookies(NextResponse.json({ success: false, error: "Audio Referensi Remix belum ditemukan. Upload Audio Referensi baru sekali lagi. File penuh harus berhasil tersimpan di Mureka sebelum membuat lagu." }, { status: 400 }));
       }
+
       mode = "mureka-reference-duration-remix";
       providerResponse = await fetch(`${MUREKA_BASE_URL}/v1/song/remix`, {
         method: "POST",
