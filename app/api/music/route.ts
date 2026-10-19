@@ -171,12 +171,8 @@ function requestedStyleTokens(rawStyle: string, tempo: number, instrumental: boo
   const positive: string[] = [];
   const negative = new Set<string>();
   const add = (...v: string[]) => v.forEach(x => { if (!positive.includes(x)) positive.push(x); });
-  if (/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) {
-    add("deep devotional qasidah", "sholawat melodic phrasing", "Islamic devotional melody", "spiritual Middle Eastern melodic ornamentation", "reverent expressive vocal delivery", "warm frame-drum and hand-percussion colors");
-  }
-  if (/dangdut/.test(s)) {
-    add("strong Indonesian dangdut groove", "kendang-style rhythmic accents", "syncopated dangdut bass", "punchy kick and percussion", "ornamental dangdut melodic phrasing", "lively rhythmic fills");
-  }
+  if (/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) add("deep devotional qasidah", "sholawat melodic phrasing", "Islamic devotional melody", "spiritual Middle Eastern melodic ornamentation", "reverent expressive vocal delivery", "warm frame-drum and hand-percussion colors");
+  if (/dangdut/.test(s)) add("strong Indonesian dangdut groove", "kendang-style rhythmic accents", "syncopated dangdut bass", "punchy kick and percussion", "ornamental dangdut melodic phrasing", "lively rhythmic fills");
   if (/slow|lambat|syahdu|sendu/.test(s)) add("slow devotional pacing", "spacious emotional phrasing", "gentle dynamics");
   if (/pop/.test(s)) add("modern pop songwriting", "polished pop arrangement");
   if (/rock/.test(s)) add("rock rhythm section", "electric guitar driven arrangement");
@@ -185,14 +181,12 @@ function requestedStyleTokens(rawStyle: string, tempo: number, instrumental: boo
   if (/minang/.test(s)) add("Minang melodic character", "Minang rhythmic ornamentation");
   if (/ambon/.test(s)) add("Ambon melodic character", "warm Eastern Indonesian phrasing");
   if (/dj|edm|electronic/.test(s)) add("DJ/electronic rhythmic production");
-  if (tempo > 0) add(`${tempo} BPM");
+  if (tempo > 0) add(`${tempo} BPM`);
   add("crystal-clear lead vocal", "bright warm full-bodied vocal", "clean controlled vibrato", "tasteful melisma and cengkok", "punchy clean low end", "clear separated mids", "open non-harsh highs", "modern polished commercial mix");
   const dominant = [
     ["pop", "pop"], ["rock", "rock"], ["reggae", "reggae"], ["dangdut", "dangdut"], ["dj|edm|electronic", "electronic/dance"], ["hip.?hop|rap", "hip-hop"], ["country", "country"], ["metal", "metal"], ["jazz", "jazz"], ["classical|orchestral", "orchestral"],
   ];
-  for (const [pattern, label] of dominant) {
-    if (!new RegExp(pattern).test(s)) negative.add(label);
-  }
+  for (const [pattern, label] of dominant) if (!new RegExp(pattern).test(s)) negative.add(label);
   if (!/pop/.test(s)) negative.add("generic pop");
   if (!/dj|edm|electronic/.test(s)) negative.add("DJ/EDM/electronic club beat");
   if (!/hip.?hop|rap/.test(s)) negative.add("hip-hop/rap");
@@ -205,7 +199,6 @@ function requestedStyleTokens(rawStyle: string, tempo: number, instrumental: boo
   return { positive, negative: [...negative] };
 }
 
-// Shared quality layer for Mesin 2.5 + Suno. This does NOT modify Mesin 1.
 function buildPremiumMusicDirective(body: Record<string, unknown>) {
   const rawStyle = String(body.style || "").trim();
   const language = String(body.language || "Indonesia").trim();
@@ -443,9 +436,7 @@ export async function POST(request: NextRequest) {
     const n = Number.isFinite(requestedN) ? Math.min(Math.max(Math.floor(requestedN), 1), 3) : 1;
     const referenceId = typeof body.reference_id === "string" ? body.reference_id.trim() : "";
     const vocalId = typeof body.vocal_id === "string" ? body.vocal_id.trim() : "";
-    if (model === "mureka-o2" && (vocalId || body.melody_id)) {
-      return NextResponse.json({ success: false, error: "Model Mureka O2 tidak mendukung Voice & Vocal atau Melody Reference. Pilih Standard, Pro, atau Adroit untuk tahap 2." }, { status: 400 });
-    }
+    if (model === "mureka-o2" && (vocalId || body.melody_id)) return NextResponse.json({ success: false, error: "Model Mureka O2 tidak mendukung Voice & Vocal atau Melody Reference. Pilih Standard, Pro, atau Adroit untuk tahap 2." }, { status: 400 });
     const musicRequest: ProviderData = { lyrics: lyrics.slice(0, 5000), model, n, stream: body.stream === true && body.disable_stream !== true };
     if (style || referenceId || vocalId) musicRequest.prompt = buildUserMusicDirective(body, "mureka");
     const gender = String(body.gender || "").toLowerCase();
@@ -461,25 +452,7 @@ export async function POST(request: NextRequest) {
     const finished = failure(providerStatus) || Boolean(findAudio(generated.data));
     const failed = failure(providerStatus);
     const audio = finished && !failed ? findAudio(generated.data) : null;
-    const saved = await saveProject(userId, {
-      title,
-      lyrics,
-      style,
-      model,
-      musicEngine: engine,
-      taskId,
-      status: providerStatus,
-      audioUrl: audio,
-      providerData: {
-        musicEngine: engine,
-        billingProvider: billingProvider(engine),
-        stage: referenceId || vocalId ? "stage2-reference-vocal" : "stage1-text",
-        hasReference: Boolean(referenceId),
-        hasVoice: Boolean(vocalId),
-        targetReferenceDurationMs: Number(body.reference_duration_ms || 0) || null,
-        data: generated.data,
-      },
-    });
+    const saved = await saveProject(userId, { title, lyrics, style, model, musicEngine: engine, taskId, status: providerStatus, audioUrl: audio, providerData: { musicEngine: engine, billingProvider: billingProvider(engine), stage: referenceId || vocalId ? "stage2-reference-vocal" : "stage1-text", hasReference: Boolean(referenceId), hasVoice: Boolean(vocalId), targetReferenceDurationMs: Number(body.reference_duration_ms || 0) || null, data: generated.data } });
     if (!saved.ok) return NextResponse.json({ success: false, error: "Task berhasil dibuat tetapi Library gagal menyimpan task.", taskId, librarySaved: false }, { status: 503 });
     return NextResponse.json({ success: true, title, taskId, status: providerStatus, musicEngine: engine, billingProvider: billingProvider(engine), audio, librarySaved: true, finished, data: generated.data });
   } catch (error) {
