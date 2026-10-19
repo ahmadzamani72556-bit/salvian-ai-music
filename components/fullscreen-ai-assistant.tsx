@@ -3,7 +3,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Check, Copy, MessageCircle, Save, Send, Sparkles, Trash2, X } from "lucide-react";
 
-type Message = { role: "user" | "assistant"; content: string; id: string };
+type MessageRole = "user" | "assistant";
+type Message = { role: MessageRole; content: string; id: string };
 type SavedMessage = { role: "assistant"; content: string; id: string; savedAt: number };
 
 const welcome: Message = {
@@ -17,11 +18,13 @@ const SAVED_KEY = "salvian-ai-music-assistant-saved-v2";
 const MAX_STORED_MESSAGES = 40;
 const MAX_SAVED_MESSAGES = 50;
 
-const lyricHeadingPattern = /^(?:\*{0,2}\s*)?(?:\[|\()?\s*(judul|intro|verse(?:\s*\d+)?|pre[- ]?chorus|chorus|refrain|bridge|interlude|outro|ending)\b[^\n]*?(?:\]|\))?\s*(?:\*{0,2})\s*:?[\s]*$/i;
+const lyricHeadingPattern = /^(?:\*{0,2}\s*)?(?:\[|\()?\s*(judul|intro|verse(?:\s*\d+)?|pre[- ]?chorus|chorus|refrain|bridge|interlude|outro|ending)\b[^\n]*?(?:\]|\))?\s*(?:\*{0,2})\s*:?\s*$/i;
 const inlineHeadingPattern = /\s*\*{0,2}\s*(\((?:judul|intro|verse(?:\s*\d+)?|pre[- ]?chorus|chorus|refrain|bridge|interlude|outro|ending)[^)]*\))\s*\*{0,2}\s*/gi;
 
 function createId() {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function cleanAssistantText(text: string) {
@@ -39,13 +42,17 @@ function renderAssistantText(text: string) {
     const lines = block.split("\n").map(line => line.trim()).filter(Boolean);
     if (!lines.length) return null;
 
-    const heading = lines.length === 1 ? lines[0].replace(/^\*+|\*+$/g, "").trim() : lines[0].replace(/^\*+|\*+$/g, "").trim();
+    const heading = lines[0].replace(/^\*+|\*+$/g, "").trim();
     if (lyricHeadingPattern.test(lines[0])) {
       return (
         <div key={`${blockIndex}-${lines[0]}`} className="mt-4 first:mt-0 rounded-2xl border border-violet-400/15 bg-violet-500/5 px-4 py-3">
-          <div className="mb-2 text-sm font-extrabold uppercase tracking-[0.12em] text-violet-200">{heading.replace(/[()[\]]/g, "")}</div>
+          <div className="mb-2 text-sm font-extrabold uppercase tracking-[0.12em] text-violet-200">
+            {heading.replace(/[()[\]]/g, "")}
+          </div>
           {lines.slice(1).map((line, index) => (
-            <div key={index} className="leading-7 text-zinc-100">{line.replace(/^\*+|\*+$/g, "").trim()}</div>
+            <div key={index} className="leading-7 text-zinc-100">
+              {line.replace(/^\*+|\*+$/g, "").trim()}
+            </div>
           ))}
         </div>
       );
@@ -55,7 +62,11 @@ function renderAssistantText(text: string) {
       <div key={`${blockIndex}-${lines[0]}`} className="mb-3 last:mb-0">
         {lines.map((line, index) => {
           const cleanLine = line.replace(/^\*+|\*+$/g, "").trim();
-          return <div key={index} className="min-h-[1.75rem] leading-7 text-zinc-200">{cleanLine || "\u00a0"}</div>;
+          return (
+            <div key={index} className="min-h-[1.75rem] leading-7 text-zinc-200">
+              {cleanLine || "\u00a0"}
+            </div>
+          );
         })}
       </div>
     );
@@ -66,12 +77,16 @@ function loadMessages(): Message[] {
   try {
     const stored = window.localStorage.getItem(CONVERSATION_KEY);
     if (!stored) return [welcome];
-    const parsed = JSON.parse(stored);
+    const parsed: unknown = JSON.parse(stored);
     if (!Array.isArray(parsed)) return [welcome];
     const valid = parsed.filter((item: unknown): item is Message => {
       if (!item || typeof item !== "object") return false;
       const value = item as Partial<Message>;
-      return (value.role === "user" || value.role === "assistant") && typeof value.content === "string" && typeof value.id === "string";
+      return (
+        (value.role === "user" || value.role === "assistant") &&
+        typeof value.content === "string" &&
+        typeof value.id === "string"
+      );
     });
     return valid.length ? valid.slice(-MAX_STORED_MESSAGES) : [welcome];
   } catch {
@@ -83,13 +98,20 @@ function loadSaved(): SavedMessage[] {
   try {
     const stored = window.localStorage.getItem(SAVED_KEY);
     if (!stored) return [];
-    const parsed = JSON.parse(stored);
+    const parsed: unknown = JSON.parse(stored);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item: unknown): item is SavedMessage => {
-      if (!item || typeof item !== "object") return false;
-      const value = item as Partial<SavedMessage>;
-      return value.role === "assistant" && typeof value.content === "string" && typeof value.id === "string" && typeof value.savedAt === "number";
-    }).slice(-MAX_SAVED_MESSAGES);
+    return parsed
+      .filter((item: unknown): item is SavedMessage => {
+        if (!item || typeof item !== "object") return false;
+        const value = item as Partial<SavedMessage>;
+        return (
+          value.role === "assistant" &&
+          typeof value.content === "string" &&
+          typeof value.id === "string" &&
+          typeof value.savedAt === "number"
+        );
+      })
+      .slice(-MAX_SAVED_MESSAGES);
   } catch {
     return [];
   }
@@ -145,7 +167,9 @@ export default function FullscreenAiAssistant() {
     if (!open) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = previousOverflow; };
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [open]);
 
   useEffect(() => {
@@ -168,10 +192,12 @@ export default function FullscreenAiAssistant() {
       .slice(-4)
       .map(({ role, content }) => ({ role, content: content.slice(0, 1600) }));
     const userMessage: Message = { id: createId(), role: "user", content: message };
-    const assistantId = createId();
+    const assistantMessage: Message = { id: createId(), role: "assistant", content: "" };
 
     setInput("");
-    setMessages(prev => [...prev, userMessage, { id: assistantId, role: "assistant", content: "" }].slice(-MAX_STORED_MESSAGES));
+    setMessages((previous: Message[]): Message[] =>
+      [...previous, userMessage, assistantMessage].slice(-MAX_STORED_MESSAGES),
+    );
     setBusy(true);
 
     try {
@@ -182,14 +208,23 @@ export default function FullscreenAiAssistant() {
         body: JSON.stringify({ message, history }),
       });
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Asisten AI sedang tidak tersedia.");
+      const data: { answer?: unknown; error?: unknown } = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Asisten AI sedang tidak tersedia.");
+      }
       const answer = typeof data.answer === "string" ? data.answer.trim() : "";
-      if (!answer) throw new Error(data.error || "Asisten AI belum menghasilkan jawaban.");
+      if (!answer) {
+        throw new Error(typeof data.error === "string" ? data.error : "Asisten AI belum menghasilkan jawaban.");
+      }
 
-      setMessages(prev => prev.map(item => item.id === assistantId ? { ...item, content: answer } : item));
+      setMessages((previous: Message[]): Message[] =>
+        previous.map(item => item.id === assistantMessage.id ? { ...item, content: answer } : item),
+      );
     } catch (error) {
-      setMessages(prev => prev.map(item => item.id === assistantId ? { ...item, content: error instanceof Error ? error.message : "Terjadi kesalahan saat menghubungkan ke Asisten AI." } : item));
+      const errorMessage = error instanceof Error ? error.message : "Terjadi kesalahan saat menghubungkan ke Asisten AI.";
+      setMessages((previous: Message[]): Message[] =>
+        previous.map(item => item.id === assistantMessage.id ? { ...item, content: errorMessage } : item),
+      );
     } finally {
       setBusy(false);
     }
@@ -215,21 +250,28 @@ export default function FullscreenAiAssistant() {
 
   const toggleSave = (message: Message) => {
     if (message.role !== "assistant" || !message.content.trim()) return;
-    setSavedMessages(previous => {
+    setSavedMessages((previous: SavedMessage[]): SavedMessage[] => {
       const exists = previous.some(item => item.id === message.id);
       if (exists) return previous.filter(item => item.id !== message.id);
-      return [...previous, { id: message.id, role: "assistant", content: message.content, savedAt: Date.now() }].slice(-MAX_SAVED_MESSAGES);
+      const saved: SavedMessage = {
+        id: message.id,
+        role: "assistant",
+        content: message.content,
+        savedAt: Date.now(),
+      };
+      return [...previous, saved].slice(-MAX_SAVED_MESSAGES);
     });
   };
 
   const deleteMessage = (id: string) => {
-    // Hapus hanya dari tampilan percakapan. Jika sebelumnya disimpan,
-    // salinan tetap berada di Riwayat Tersimpan.
-    setMessages(previous => previous.filter(message => message.id !== id));
+    setMessages((previous: Message[]): Message[] => previous.filter(message => message.id !== id));
   };
 
   const restoreSaved = (item: SavedMessage) => {
-    setMessages(previous => [...previous, { id: createId(), role: "assistant", content: item.content }].slice(-MAX_STORED_MESSAGES));
+    const restored: Message = { id: createId(), role: "assistant", content: item.content };
+    setMessages((previous: Message[]): Message[] =>
+      [...previous, restored].slice(-MAX_STORED_MESSAGES),
+    );
     setShowSaved(false);
   };
 
@@ -238,15 +280,15 @@ export default function FullscreenAiAssistant() {
       <div className="flex h-full min-h-0 w-full flex-col">
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[#0c0c13] px-4 py-3 sm:px-7 sm:py-4">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Sparkles size={20}/></div>
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Sparkles size={20} /></div>
             <div className="min-w-0"><div className="font-extrabold text-base sm:text-lg">Asisten AI</div><div className="truncate text-xs text-zinc-500">SALVIAN AI MUSIC · Ruang kerja penuh</div></div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button type="button" onClick={() => setShowSaved(true)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/10">
-              <Save size={17}/> <span className="hidden sm:inline">Riwayat</span><span className="sm:hidden">{savedMessages.length}</span>
+              <Save size={17} /> <span className="hidden sm:inline">Riwayat</span><span className="sm:hidden">{savedMessages.length}</span>
             </button>
             <button type="button" onClick={() => { if (!busy) setOpen(false); }} className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/10">
-              <X size={18}/> Kembali
+              <X size={18} /> Kembali
             </button>
           </div>
         </header>
@@ -260,17 +302,19 @@ export default function FullscreenAiAssistant() {
                     <div className="break-words">
                       {item.content ? (item.role === "assistant" ? renderAssistantText(item.content) : <div className="whitespace-pre-wrap">{item.content}</div>) : (busy && item.role === "assistant" ? "Menjawab…" : "")}
                     </div>
-                    {item.content && item.role === "assistant" && <div className="mt-4 flex flex-wrap gap-2 border-t border-white/8 pt-3">
-                      <button type="button" onClick={() => void copyMessage(item.content, item.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">
-                        {copiedId === item.id ? <Check size={14}/> : <Copy size={14}/>} {copiedId === item.id ? "Tersalin" : "Salin"}
-                      </button>
-                      <button type="button" onClick={() => toggleSave(item)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">
-                        <Save size={14}/> {savedIds.has(item.id) ? "Tersimpan" : "Simpan"}
-                      </button>
-                      <button type="button" onClick={() => deleteMessage(item.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-red-400/15 bg-red-500/5 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10">
-                        <Trash2 size={14}/> Hapus
-                      </button>
-                    </div>}
+                    {item.content && item.role === "assistant" && (
+                      <div className="mt-4 flex flex-wrap gap-2 border-t border-white/8 pt-3">
+                        <button type="button" onClick={() => void copyMessage(item.content, item.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">
+                          {copiedId === item.id ? <Check size={14} /> : <Copy size={14} />} {copiedId === item.id ? "Tersalin" : "Salin"}
+                        </button>
+                        <button type="button" onClick={() => toggleSave(item)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">
+                          <Save size={14} /> {savedIds.has(item.id) ? "Tersimpan" : "Simpan"}
+                        </button>
+                        <button type="button" onClick={() => deleteMessage(item.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-red-400/15 bg-red-500/5 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10">
+                          <Trash2 size={14} /> Hapus
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -280,9 +324,9 @@ export default function FullscreenAiAssistant() {
           <aside className="flex shrink-0 border-t border-white/10 bg-[#0c0c13] p-3 sm:p-4 lg:w-[440px] lg:border-l lg:border-t-0 lg:p-6">
             <form onSubmit={ask} className="flex w-full flex-col gap-3">
               <div className="flex items-center justify-between"><div className="text-sm font-bold text-zinc-200">Tulis bebas</div><div className="text-[11px] text-zinc-600">{input.length}/6000</div></div>
-              <textarea value={input} onChange={event => setInput(event.target.value)} maxLength={6000} autoFocus placeholder="Ketik lirik lagu, ide musik, genre, prompt, revisi, atau apa saja…" className="min-h-[240px] w-full flex-1 resize-none rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-zinc-600 focus:border-violet-400/40 lg:min-h-[420px]"/>
+              <textarea value={input} onChange={event => setInput(event.target.value)} maxLength={6000} autoFocus placeholder="Ketik lirik lagu, ide musik, genre, prompt, revisi, atau apa saja…" className="min-h-[240px] w-full flex-1 resize-none rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-zinc-600 focus:border-violet-400/40 lg:min-h-[420px]" />
               <button type="submit" disabled={busy || !input.trim()} className="inline-flex h-12 w-full shrink-0 items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 text-sm font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-40 hover:bg-violet-500">
-                <Send size={18}/> {busy ? "Menjawab…" : "Kirim ke Asisten AI"}
+                <Send size={18} /> {busy ? "Menjawab…" : "Kirim ke Asisten AI"}
               </button>
             </form>
           </aside>
@@ -293,7 +337,7 @@ export default function FullscreenAiAssistant() {
             <div className="flex max-h-[85dvh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#111119] shadow-2xl">
               <div className="flex items-center justify-between border-b border-white/10 px-4 py-4 sm:px-6">
                 <div><div className="font-extrabold">Riwayat Tersimpan</div><div className="text-xs text-zinc-500">Tetap tersimpan walaupun pesan dihapus dari tampilan.</div></div>
-                <button type="button" onClick={() => setShowSaved(false)} className="rounded-xl border border-white/10 bg-white/5 p-2 text-zinc-300 hover:bg-white/10"><X size={18}/></button>
+                <button type="button" onClick={() => setShowSaved(false)} className="rounded-xl border border-white/10 bg-white/5 p-2 text-zinc-300 hover:bg-white/10"><X size={18} /></button>
               </div>
               <div className="min-h-0 overflow-y-auto p-4 sm:p-6">
                 {savedMessages.length === 0 ? (
@@ -304,8 +348,8 @@ export default function FullscreenAiAssistant() {
                       <div key={item.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
                         <div className="max-h-72 overflow-y-auto text-sm leading-7">{renderAssistantText(item.content)}</div>
                         <div className="mt-3 flex flex-wrap gap-2 border-t border-white/8 pt-3">
-                          <button type="button" onClick={() => void copyMessage(item.content, item.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">{copiedId === item.id ? <Check size={14}/> : <Copy size={14}/>} {copiedId === item.id ? "Tersalin" : "Salin"}</button>
-                          <button type="button" onClick={() => restoreSaved(item)} className="inline-flex items-center gap-1.5 rounded-xl border border-violet-400/15 bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-200 hover:bg-violet-500/15"><MessageCircle size={14}/> Kembalikan ke percakapan</button>
+                          <button type="button" onClick={() => void copyMessage(item.content, item.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">{copiedId === item.id ? <Check size={14} /> : <Copy size={14} />} {copiedId === item.id ? "Tersalin" : "Salin"}</button>
+                          <button type="button" onClick={() => restoreSaved(item)} className="inline-flex items-center gap-1.5 rounded-xl border border-violet-400/15 bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-200 hover:bg-violet-500/15"><MessageCircle size={14} /> Kembalikan ke percakapan</button>
                         </div>
                       </div>
                     ))}
