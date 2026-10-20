@@ -15,35 +15,81 @@ function isTrustedBlobUrl(value: string) {
   try {
     const url = new URL(value);
     return url.protocol === "https:" && url.hostname.endsWith(".public.blob.vercel-storage.com");
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
-async function fileFromBlobUrl(url: string, name: string) {
-  if (!isTrustedBlobUrl(url)) throw new Error("Audio tidak berasal dari penyimpanan SALVIAN yang valid.");
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) throw new Error(`Gagal membaca Audio dari penyimpanan (${response.status}).`);
-  const contentLength = Number(response.headers.get("content-length") || 0);
-  if (contentLength > 10 * 1024 * 1024) throw new Error("Audio melebihi batas 10 MB.");
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > 10 * 1024 * 1024) throw new Error("Audio melebihi batas 10 MB.");
-  const contentType = response.headers.get("content-type") || "audio/mpeg";
-  return new File([buffer], name || "audio.mp3", { type: contentType });
+async function sunoUploadFromUrl(fileUrl: string, name: string, purpose: "reference" | "voice") {
+  if (!SUNO_API_KEY) throw new Error("SUNO_API_KEY belum tersedia di Vercel.");
+  if (!isTrustedBlobUrl(fileUrl)) throw new Error("Audio tidak berasal dari penyimpanan SALVIAN yang valid.");
+
+  // IMPORTANT: the verified storage-first flow stores the browser file in
+  // Vercel Blob first. Suno then receives the public Blob URL as JSON.
+  // This follows Suno's documented `file_url` upload path and avoids sending
+  // a second multipart request through the provider parser.
+  const path = purpose === "voice"
+    ? "/api/music/voice-profile/create"
+    : "/api/music/upload-source";
+
+  const body = purpose === "voice"
+    ? {
+        file_url: fileUrl,
+        file_name: name,
+        title: name.replace(/\.[^.]+$/i, "").slice(0, 80),
+        source_kind: "upload",
+      }
+    : {
+        model: "suno-v6",
+        file_url: fileUrl,
+        file_name: name,
+        upload_type: "file_upload",
+      };
+
+  const response = await fetch(`${SUNO_API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${SUNO_API_KEY}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+
+  const data = await json(response);
+  if (!response.ok || data?.success === false || (data?.code && data.code !== 200)) {
+    throw new Error(data?.message || data?.error?.message || `Suno upload ${response.status}`);
+  }
+
+  const payload = data?.data || data;
+  const id = purpose === "voice"
+    ? payload?.voice_id
+    : (payload?.clip_id || payload?.song_id || payload?.id);
+
+  if (!id) {
+    throw new Error(`Suno tidak mengembalikan ID ${purpose === "voice" ? "voice profile" : "source audio"}.`);
+  }
+
+  return { id: String(id), data };
 }
 
-async function sunoUpload(file: File, purpose: "reference" | "voice") {
+async function sunoUploadFromFile(file: File, name: string, purpose: "reference" | "voice") {
   if (!SUNO_API_KEY) throw new Error("SUNO_API_KEY belum tersedia di Vercel.");
   const form = new FormData();
   form.append("file", file, file.name);
-  form.append("file_name", file.name);
-  form.append("model", "suno-v6");
-  form.append("upload_type", "file_upload");
-
-  let path = "/api/music/upload-source";
-  if (purpose === "voice") {
-    path = "/api/music/voice-profile/create";
-    form.append("title", file.name.replace(/\.[^.]+$/i, "").slice(0, 80));
+  form.append("file_name", name);
+  if (purpose === "reference") {
+    form.append("model", "suno-v6");
+    form.append("upload_type", "file_upload");
+  } else {
+    form.append("title", name.replace(/\.[^.]+$/i, "").slice(0, 80));
     form.append("source_kind", "upload");
   }
+
+  const path = purpose === "voice"
+    ? "/api/music/voice-profile/create"
+    : "/api/music/upload-source";
 
   const response = await fetch(`${SUNO_API_BASE_URL}${path}`, {
     method: "POST",
@@ -55,9 +101,10 @@ async function sunoUpload(file: File, purpose: "reference" | "voice") {
   if (!response.ok || data?.success === false || (data?.code && data.code !== 200)) {
     throw new Error(data?.message || data?.error?.message || `Suno upload ${response.status}`);
   }
-
   const payload = data?.data || data;
-  const id = purpose === "voice" ? payload?.voice_id : (payload?.clip_id || payload?.song_id || payload?.id);
+  const id = purpose === "voice"
+    ? payload?.voice_id
+    : (payload?.clip_id || payload?.song_id || payload?.id);
   if (!id) throw new Error(`Suno tidak mengembalikan ID ${purpose === "voice" ? "voice profile" : "source audio"}.`);
   return { id: String(id), data };
 }
@@ -75,14 +122,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Mode Remix penuh saat ini hanya tersedia untuk Mureka." }, { status: 400 });
     }
 
-    const sourceFile = file instanceof File ? file : (fileUrl ? await fileFromBlobUrl(fileUrl, name) : null);
-    if (!sourceFile) return NextResponse.json({ success: false, error: "File audio belum dipilih." }, { status: 400 });
-    if (sourceFile.size > 10 * 1024 * 1024) return NextResponse.json({ success: false, error: "Audio melebihi batas 10 MB." }, { status: 413 });
+    // The normal browser path is Blob URL -> JSON file_url -> Suno.
+    // Keep direct multipart only as a safe fallback for non-Blob callers.
+    const result = fileUrl
+      ? await sunoUploadFromUrl(fileUrl, name, purpose)
+      : file instanceof File
+        ? await sunoUploadFromFile(file, name, purpose)
+        : null;
 
-    const allowed = /\.(mp3|m4a|wav|aac|flac|ogg)$/i.test(sourceFile.name);
-    if (!allowed) return NextResponse.json({ success: false, error: "Format audio yang didukung: MP3, M4A, WAV, AAC, FLAC, dan OGG." }, { status: 400 });
+    if (!result) return NextResponse.json({ success: false, error: "File audio belum dipilih." }, { status: 400 });
 
-    const result = await sunoUpload(sourceFile, purpose);
     return NextResponse.json({
       success: true,
       id: result.id,
