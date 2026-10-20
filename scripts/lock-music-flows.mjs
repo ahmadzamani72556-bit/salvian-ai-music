@@ -6,11 +6,12 @@ import { join } from "node:path";
  * SALVIAN AI MUSIC FLOW LOCK
  *
  * The verified Suno, Mureka and Music 2.5 flows are intentionally frozen.
+ * The feature boundary is also frozen: Music owns neither user login/session nor
+ * billing/credit/checkout. Parent SALVIAN AI owns those concerns.
  * If any protected production file changes, the production build MUST stop.
- * This prevents a later patch/build script from silently changing a working flow.
  *
- * To intentionally change a protected flow: update the implementation, test it,
- * review the diff, then update the expected SHA in this file in the same reviewed change.
+ * To intentionally change a protected flow or boundary: update the implementation,
+ * test it, review the diff, then update the expected SHA in this file in the same reviewed change.
  */
 
 const ROOT = process.cwd();
@@ -38,6 +39,10 @@ const LOCKED = {
   "components/music-upload-bridge.tsx": "83e782a0c8084372f633da16bbd8a837a9c7b9d4",
   "components/premium-music-studio.tsx": "50acfd01b4a9fe04dfd3cd7824da81962b20a7bd",
   "components/stage2-reference-flow.tsx": "c976995df703f6bc26fe36f02e78edad83bf0e39",
+
+  // Feature boundary and build definition. These must not be weakened.
+  "scripts/enforce-music-feature-boundary.mjs": "28145815d4130b3da1ebcb4a5ec5a58ae9e99394",
+  "package.json": "24753fef818fd1b92e43b9834deb3e8948f31300",
 
   // Build-time hardening that made the three providers stable.
   "scripts/fix-suno-custom-payload.mjs": "43a3bf9d6e0fc7fd43e5580ad2f6d49900f4fae1",
@@ -71,7 +76,7 @@ for (const [relativePath, expected] of Object.entries(LOCKED)) {
 
 if (failures.length) {
   console.error("\nSALVIAN AI MUSIC FLOW LOCK: BUILD BLOCKED");
-  console.error("A protected working flow was changed. No production build is allowed until the change is reviewed and the lock is deliberately updated.\n");
+  console.error("A protected working flow or the feature boundary was changed. No production build is allowed until the change is reviewed and the lock is deliberately updated.\n");
   for (const failure of failures) console.error(`- ${failure}`);
   process.exit(1);
 }
