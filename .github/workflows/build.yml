@@ -29,3 +29,5 @@ jobs:
           git commit -m "lock Music 2.5 and Suno style vocal qasidah" || true
           git push origin HEAD:main
       - run: npm run build
+
+# one-time trigger marker
