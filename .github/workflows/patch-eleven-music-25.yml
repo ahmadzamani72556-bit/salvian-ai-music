@@ -6,54 +6,36 @@ permissions:
   contents: write
 jobs:
   patch:
-    if: contains(github.event.head_commit.message, 'Patch Eleven Music 2.5')
+    if: contains(github.event.head_commit.message, 'Retry Patch Eleven Music 2.5')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Patch route
-        shell: python
+        shell: bash
         run: |
+          python3 <<'PY'
           from pathlib import Path
+          import subprocess
           p = Path('app/api/music/route.ts')
           s = p.read_text()
 
-          old = '''  if (/dj|edm|electronic/.test(s)) add("DJ/electronic rhythmic production");\n  if (tempo > 0) add(`${tempo} BPM`);\n  add("crystal-clear lead vocal", "bright warm full-bodied vocal", "clean controlled vibrato", "tasteful melisma and cengkok", "punchy clean low end", "clear separated mids", "open non-harsh highs", "modern polished commercial mix");'''
-          new = '''  if (/dj|edm|electronic/.test(s)) add("DJ/electronic rhythmic production");\n  if (/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) add("qasidah devotional lead vocal", "Arabic/Islamic melodic ornamentation", "rebana and frame-drum pulse", "deep devotional cadence");\n  if (/dangdut/.test(s)) add("authentic Indonesian dangdut vocal cengkok", "ornamental dangdut melisma", "kendang dangdut groove", "punchy kendang fills");\n  if (tempo > 0) add(`${tempo} BPM`);\n  add("crystal-clear lead vocal", "bright warm full-bodied vocal", "clean controlled vibrato", "tasteful melisma and cengkok", "punchy clean low end", "clear separated mids", "open non-harsh highs", "modern polished commercial mix");'''
-          if old not in s: raise SystemExit('style anchor block not found')
-          s = s.replace(old, new, 1)
-
-          old = '''  if (!/dangdut/.test(s)) negative.add("dangdut");\n  if (instrumental) negative.add("lead vocals and lyrics");'''
-          new = '''  if (!/dangdut/.test(s)) negative.add("dangdut");\n  if (!/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) {\n    negative.add("qasidah devotional music");\n    negative.add("Islamic devotional chant");\n    negative.add("rebana/frame-drum ensemble");\n  }\n  if (!/dangdut/.test(s)) {\n    negative.add("dangdut kendang groove");\n    negative.add("dangdut cengkok vocals");\n  }\n  negative.add("generic band arrangement");\n  negative.add("straight pop band");\n  negative.add("rock band");\n  negative.add("flat band-style vocals");\n  if (instrumental) negative.add("lead vocals and lyrics");'''
-          if old not in s: raise SystemExit('negative block not found')
-          s = s.replace(old, new, 1)
-
-          old = '''  const vocalId = String(body.vocal_id || "").trim();\n  const styleTokens = requestedStyleTokens(rawStyle, tempo, instrumental);'''
-          new = '''  const vocalId = String(body.vocal_id || "").trim();\n  const lyrics = String(body.lyrics || "");\n  const hasArabicLyrics = /[\\u0600-\\u06FF]/.test(lyrics);\n  const styleTokens = requestedStyleTokens(rawStyle, tempo, instrumental);'''
-          if old not in s: raise SystemExit('premium vars block not found')
-          s = s.replace(old, new, 1)
-
-          old = '''    "VOCAL EXPRESSION: natural confident singing with beautiful melodic dangdut-style cengkok and tasteful melisma/vibrato where appropriate. Cengkok decorates sustained vowels and never obscures lyric words. Vocal is merdu, lantang, terang, emotional and controlled, never harsh.",\n    "QASIDAH/SHOLAWAT LOCK: if qasidah, sholawat, religi or Islami is requested, the Islamic devotional identity must be obvious and deep in the melody, phrasing, ornamentation, cadence and atmosphere. Do not turn it into generic pop or unrelated dance music.",\n    "DANGDUT SHOLAWAT LOCK: if dangdut + sholawat/religi is requested, keep strong dangdut groove, kendang-style accents, bass/kick drive, fills and melodic ornaments while the sholawat melodic identity stays prominent. If slow is requested, remain slow and devotional.",'''
-          new = '''    "VOCAL EXPRESSION LOCK: do not sing with a flat band-style pop delivery. Use authentic dangdut-style cengkok, ornamental turns, controlled melisma and expressive vibrato; phrases must rise/fall naturally, with strong sustained notes and tasteful vocal answers. Cengkok decorates vowels but never hides consonants or lyric words. Vocal is merdu, lantang, terang, emotional and controlled.",\n    "QASIDAH/SHOLAWAT LOCK: when qasidah, sholawat, religi or Islami is requested, make the devotional identity unmistakable in melody, cadence, ornamentation and atmosphere: qasidah-style melodic movement, Arabic/Islamic phrasing, rebana/frame-drum colors and reverent call-and-response feeling. Never default to a generic pop/rock band.",\n    "DANGDUT SHOLAWAT LOCK: when dangdut + sholawat/religi is requested, the rhythm must unmistakably sound dangdut: kendang-led groove, syncopated dangdut bass, punchy kick, fills and rhythmic breaks, with the sholawat/qasidah melody remaining the emotional center. If slow is requested, keep the dangdut-sholawat identity slow, deep and devotional rather than turning into pop ballad.",\n    hasArabicLyrics ? "ARABIC LYRIC DICTION LOCK: sing every supplied Arabic word exactly and in order. Preserve Arabic spelling/word boundaries as supplied; use clear Arabic makhraj, distinct consonants, accurate vowels, clean syllable timing and audible word endings. Never transliterate, translate, replace, merge, invent or blur Arabic words into Indonesian-sounding phonemes." : "",'''
-          if old not in s: raise SystemExit('vocal/qasidah block not found')
-          s = s.replace(old, new, 1)
-
-          old = '''function enforceElevenPlan(plan: any, body: Record<string, unknown>) {'''
-          new = '''function normalizeElevenCompositionPlan(plan: any) {\n  if (!plan || typeof plan !== "object") return plan;\n  const { music_length_ms: _musicLengthMs, model_id: _modelId, prompt: _prompt, ...cleanPlan } = plan;\n  return cleanPlan;\n}\n\nfunction enforceElevenPlan(plan: any, body: Record<string, unknown>) {'''
-          if old not in s: raise SystemExit('enforce function anchor not found')
-          s = s.replace(old, new, 1)
-
-          old = '''  const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? enforceElevenPlan(planData, body) : null;'''
-          new = '''  const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? normalizeElevenCompositionPlan(enforceElevenPlan(planData, body)) : null;'''
-          if old not in s: raise SystemExit('composition plan assignment not found')
-          s = s.replace(old, new, 1)
-
+          replacements = [
+          ('''  if (/dj|edm|electronic/.test(s)) add("DJ/electronic rhythmic production");\n  if (tempo > 0) add(`${tempo} BPM`);\n  add("crystal-clear lead vocal", "bright warm full-bodied vocal", "clean controlled vibrato", "tasteful melisma and cengkok", "punchy clean low end", "clear separated mids", "open non-harsh highs", "modern polished commercial mix");''', '''  if (/dj|edm|electronic/.test(s)) add("DJ/electronic rhythmic production");\n  if (/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) add("qasidah devotional lead vocal", "Arabic/Islamic melodic ornamentation", "rebana and frame-drum pulse", "deep devotional cadence");\n  if (/dangdut/.test(s)) add("authentic Indonesian dangdut vocal cengkok", "ornamental dangdut melisma", "kendang dangdut groove", "punchy kendang fills");\n  if (tempo > 0) add(`${tempo} BPM`);\n  add("crystal-clear lead vocal", "bright warm full-bodied vocal", "clean controlled vibrato", "tasteful melisma and cengkok", "punchy clean low end", "clear separated mids", "open non-harsh highs", "modern polished commercial mix");'''),
+          ('''  if (!/dangdut/.test(s)) negative.add("dangdut");\n  if (instrumental) negative.add("lead vocals and lyrics");''', '''  if (!/dangdut/.test(s)) negative.add("dangdut");\n  if (!/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) {\n    negative.add("qasidah devotional music");\n    negative.add("Islamic devotional chant");\n    negative.add("rebana/frame-drum ensemble");\n  }\n  if (!/dangdut/.test(s)) {\n    negative.add("dangdut kendang groove");\n    negative.add("dangdut cengkok vocals");\n  }\n  negative.add("generic band arrangement");\n  negative.add("straight pop band");\n  negative.add("rock band");\n  negative.add("flat band-style vocals");\n  if (instrumental) negative.add("lead vocals and lyrics");'''),
+          ('''  const vocalId = String(body.vocal_id || "").trim();\n  const styleTokens = requestedStyleTokens(rawStyle, tempo, instrumental);''', '''  const vocalId = String(body.vocal_id || "").trim();\n  const lyrics = String(body.lyrics || "");\n  const hasArabicLyrics = /[\\u0600-\\u06FF]/.test(lyrics);\n  const styleTokens = requestedStyleTokens(rawStyle, tempo, instrumental);'''),
+          ('''    "VOCAL EXPRESSION: natural confident singing with beautiful melodic dangdut-style cengkok and tasteful melisma/vibrato where appropriate. Cengkok decorates sustained vowels and never obscures lyric words. Vocal is merdu, lantang, terang, emotional and controlled, never harsh.",\n    "QASIDAH/SHOLAWAT LOCK: if qasidah, sholawat, religi or Islami is requested, the Islamic devotional identity must be obvious and deep in the melody, phrasing, ornamentation, cadence and atmosphere. Do not turn it into generic pop or unrelated dance music.",\n    "DANGDUT SHOLAWAT LOCK: if dangdut + sholawat/religi is requested, keep strong dangdut groove, kendang-style accents, bass/kick drive, fills and melodic ornaments while the sholawat melodic identity stays prominent. If slow is requested, remain slow and devotional.",''', '''    "VOCAL EXPRESSION LOCK: do not sing with a flat band-style pop delivery. Use authentic dangdut-style cengkok, ornamental turns, controlled melisma and expressive vibrato; phrases must rise/fall naturally, with strong sustained notes and tasteful vocal answers. Cengkok decorates vowels but never hides consonants or lyric words. Vocal is merdu, lantang, terang, emotional and controlled.",\n    "QASIDAH/SHOLAWAT LOCK: when qasidah, sholawat, religi or Islami is requested, make the devotional identity unmistakable in melody, cadence, ornamentation and atmosphere: qasidah-style melodic movement, Arabic/Islamic phrasing, rebana/frame-drum colors and reverent call-and-response feeling. Never default to a generic pop/rock band.",\n    "DANGDUT SHOLAWAT LOCK: when dangdut + sholawat/religi is requested, the rhythm must unmistakably sound dangdut: kendang-led groove, syncopated dangdut bass, punchy kick, fills and rhythmic breaks, with the sholawat/qasidah melody remaining the emotional center. If slow is requested, keep the dangdut-sholawat identity slow, deep and devotional rather than turning into pop ballad.",\n    hasArabicLyrics ? "ARABIC LYRIC DICTION LOCK: sing every supplied Arabic word exactly and in order. Preserve Arabic spelling/word boundaries as supplied; use clear Arabic makhraj, distinct consonants, accurate vowels, clean syllable timing and audible word endings. Never transliterate, translate, replace, merge, invent or blur Arabic words into Indonesian-sounding phonemes." : "",'''),
+          ('''function enforceElevenPlan(plan: any, body: Record<string, unknown>) {''', '''function normalizeElevenCompositionPlan(plan: any) {\n  if (!plan || typeof plan !== "object") return plan;\n  const { music_length_ms: _musicLengthMs, model_id: _modelId, prompt: _prompt, ...cleanPlan } = plan;\n  return cleanPlan;\n}\n\nfunction enforceElevenPlan(plan: any, body: Record<string, unknown>) {'''),
+          ('''  const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? enforceElevenPlan(planData, body) : null;''', '''  const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? normalizeElevenCompositionPlan(enforceElevenPlan(planData, body)) : null;'''),
+          ]
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit('patch anchor not found')
+              s = s.replace(old, new, 1)
           p.write_text(s)
-
-          # Commit the actual source change and remove this one-shot patch workflow.
-          import subprocess
           subprocess.run(['git','config','user.name','salvian-ai-bot'], check=True)
           subprocess.run(['git','config','user.email','salvian-ai-bot@users.noreply.github.com'], check=True)
           subprocess.run(['git','add','app/api/music/route.ts'], check=True)
           subprocess.run(['git','rm','.github/workflows/patch-eleven-music-25.yml'], check=True)
           subprocess.run(['git','commit','-m','fix Music 2.5 qasidah style lock and composition plan'], check=True)
           subprocess.run(['git','push','origin','HEAD:main'], check=True)
+          PY
