@@ -3,56 +3,21 @@
 @tailwind utilities;
 
 :root { color-scheme: dark; }
-
 html,
-body {
-  margin: 0;
-  min-height: 100%;
-  background: #07070b;
-  color: #f7f7fb;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-
-body {
-  background:
-    radial-gradient(circle at 50% -10%, rgba(124, 58, 237, 0.18), transparent 35%),
-    #07070b;
-  overflow-x: hidden;
-}
-
+body { margin: 0; min-height: 100%; background: #07070b; color: #f7f7fb; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { background: radial-gradient(circle at 50% -10%, rgba(124, 58, 237, 0.18), transparent 35%), #07070b; overflow-x: hidden; }
 * { box-sizing: border-box; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
-
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #292936; border-radius: 999px; }
+.card { background: rgba(18, 18, 25, 0.82); border: 1px solid #292934; border-radius: 22px; box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22); }
+.glass { background: rgba(11, 11, 16, 0.76); backdrop-filter: blur(18px); border: 1px solid rgba(255, 255, 255, 0.08); }
+.gradient-text { background: linear-gradient(90deg, #fff, #c4b5fd, #f0abfc); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
-.card {
-  background: rgba(18, 18, 25, 0.82);
-  border: 1px solid #292934;
-  border-radius: 22px;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
-}
+[data-premium-studio] img[src="/salvian-ai-logo.svg"] { display: none !important; }
 
-.glass {
-  background: rgba(11, 11, 16, 0.76);
-  backdrop-filter: blur(18px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.gradient-text {
-  background: linear-gradient(90deg, #fff, #c4b5fd, #f0abfc);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-/* Music Studio: permanently hide the legacy SALVIAN AI logo artwork. */
-[data-premium-studio] img[src="/salvian-ai-logo.svg"] {
-  display: none !important;
-}
-
-/* Lyrics editor: use the same clean, readable sans-serif treatment as the reference screenshot. */
+/* Lirik editor: terang, besar, bersih dan mudah dibaca. */
 [data-premium-studio] textarea.font-mono {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
   font-size: 16px !important;
@@ -60,172 +25,62 @@ button { cursor: pointer; }
   letter-spacing: normal !important;
   font-variant-ligatures: normal !important;
 }
+[data-premium-studio] textarea[placeholder*="[Verse]"] {
+  color: #ffffff !important;
+  caret-color: #c4b5fd !important;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  font-size: 17px !important;
+  font-weight: 500 !important;
+  line-height: 1.9 !important;
+  letter-spacing: 0.005em !important;
+  text-shadow: 0 0 12px rgba(255,255,255,.06);
+}
+[data-premium-studio] textarea[placeholder*="[Verse]"]::placeholder { color: #9a9aa5 !important; opacity: 1 !important; }
 
-/* AI Assistant conversation: readable ChatGPT-like body typography instead of tiny monospace-style text. */
-[data-premium-studio] .fixed.bottom-4.right-4 .max-h-72 > div {
+/* Lirik hasil lagu: tidak lagi abu-abu kecil atau terpotong tiga baris. */
+[data-premium-studio] article p.whitespace-pre-wrap.line-clamp-3 {
+  color: #f7f7fb !important;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
   font-size: 16px !important;
-  line-height: 1.65 !important;
-  letter-spacing: normal !important;
+  font-weight: 500 !important;
+  line-height: 1.9 !important;
+  letter-spacing: 0.01em !important;
+  text-shadow: 0 0 14px rgba(255,255,255,.08);
+  display: block !important;
+  -webkit-line-clamp: unset !important;
+  -webkit-box-orient: initial !important;
+  max-height: 15rem !important;
+  overflow-y: auto !important;
+  padding: 1rem 1.05rem !important;
+  border: 1px solid rgba(255,255,255,.09) !important;
+  border-radius: 1rem !important;
+  background: rgba(255,255,255,.035) !important;
+}
+[data-premium-studio] .space-y-3 > div > p.line-clamp-2 {
+  color: #e4e4e7 !important;
+  font-size: 14px !important;
+  line-height: 1.75 !important;
+  font-weight: 450 !important;
 }
 
-[data-premium-studio] .fixed.bottom-4.right-4 form input {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-  font-size: 16px !important;
-  line-height: 1.5 !important;
-}
+/* AI Assistant. */
+[data-premium-studio] .fixed.bottom-4.right-4 .max-h-72 > div { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; font-size: 16px !important; line-height: 1.65 !important; letter-spacing: normal !important; }
+[data-premium-studio] .fixed.bottom-4.right-4 form input { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; font-size: 16px !important; line-height: 1.5 !important; }
 
-/* Mobile Studio: the document itself must own vertical scrolling. The Studio
-   main element previously acted as a nested flex scroller, which can trap
-   touch scrolling on phones after an upload. */
 @media (max-width: 1023px) {
-  html,
-  body {
-    overflow-x: hidden !important;
-    overflow-y: auto !important;
-    height: auto !important;
-    min-height: 100% !important;
-  }
-
-  [data-premium-studio] {
-    width: 100% !important;
-    max-width: 100vw !important;
-    min-width: 0 !important;
-    overflow-x: clip !important;
-  }
-
-  [data-premium-studio] > .relative {
-    display: block !important;
-    width: 100% !important;
-    max-width: 100vw !important;
-    min-width: 0 !important;
-    min-height: 100dvh !important;
-    overflow-x: clip !important;
-  }
-
-  [data-premium-studio] main {
-    display: block !important;
-    width: 100% !important;
-    max-width: 100vw !important;
-    min-width: 0 !important;
-    min-height: 100dvh !important;
-    height: auto !important;
-    overflow-x: clip !important;
-    overflow-y: visible !important;
-    padding-bottom: 7rem !important;
-  }
-
-  [data-premium-studio] main > div,
-  [data-premium-studio] main section,
-  [data-premium-studio] main section > div,
-  [data-premium-studio] .grid,
-  [data-premium-studio] .space-y-5 {
-    min-width: 0 !important;
-    max-width: 100% !important;
-  }
-
-  [data-premium-studio] button,
-  [data-premium-studio] input,
-  [data-premium-studio] textarea,
-  [data-premium-studio] select {
-    max-width: 100% !important;
-  }
-
-  /* Stage-2 upload cards: force both cards to use the actual mobile column
-     width. Their flex content must be allowed to shrink so a long filename
-     cannot establish a larger intrinsic width for the button/grid. */
-  [data-premium-studio] section.grid > div:first-child,
-  [data-premium-studio] section.grid > div:first-child > div:first-child {
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
-  }
-
-  [data-premium-studio] section.grid > div:first-child > div:first-child > button {
-    display: flex !important;
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
-    overflow: hidden !important;
-    box-sizing: border-box !important;
-  }
-
-  [data-premium-studio] section.grid > div:first-child > div:first-child > button > span:nth-child(2) {
-    min-width: 0 !important;
-    max-width: 100% !important;
-    flex: 1 1 0% !important;
-    overflow: hidden !important;
-  }
-
-  [data-premium-studio] section.grid > div:first-child > div:first-child > button > span:nth-child(2) > span {
-    min-width: 0 !important;
-    max-width: 100% !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    white-space: nowrap !important;
-  }
-
-  [data-premium-studio] h1,
-  [data-premium-studio] h2,
-  [data-premium-studio] h3,
-  [data-premium-studio] p,
-  [data-premium-studio] span {
-    overflow-wrap: anywhere;
-  }
-
-  nav[aria-label="Navigasi Studio Musik"] {
-    position: fixed !important;
-    left: 0 !important;
-    right: 0 !important;
-    bottom: 0 !important;
-    top: auto !important;
-    width: 100% !important;
-    max-width: 100vw !important;
-    min-width: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    transform: none !important;
-  }
-
-  nav[aria-label="Navigasi Studio Musik"] > div {
-    display: grid !important;
-    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    margin: 0 !important;
-    padding: 8px 2px !important;
-    gap: 0 !important;
-    overflow: hidden !important;
-    box-sizing: border-box !important;
-  }
-
-  nav[aria-label="Navigasi Studio Musik"] > div > button {
-    display: flex !important;
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
-    flex: none !important;
-    margin: 0 !important;
-    padding: 8px 1px !important;
-    white-space: normal !important;
-    text-align: center !important;
-    align-items: center !important;
-    justify-content: center !important;
-    overflow: hidden !important;
-    box-sizing: border-box !important;
-  }
-
-  nav[aria-label="Navigasi Studio Musik"] > div > button > span {
-    display: block !important;
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
-    overflow: hidden !important;
-    overflow-wrap: anywhere !important;
-    word-break: break-word !important;
-    line-height: 1.1 !important;
-    text-align: center !important;
-  }
+  html, body { overflow-x: hidden !important; overflow-y: auto !important; height: auto !important; min-height: 100% !important; }
+  [data-premium-studio] { width: 100% !important; max-width: 100vw !important; min-width: 0 !important; overflow-x: clip !important; }
+  [data-premium-studio] > .relative { display: block !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; min-height: 100dvh !important; overflow-x: clip !important; }
+  [data-premium-studio] main { display: block !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; min-height: 100dvh !important; height: auto !important; overflow-x: clip !important; overflow-y: visible !important; padding-bottom: 7rem !important; }
+  [data-premium-studio] main > div, [data-premium-studio] main section, [data-premium-studio] main section > div, [data-premium-studio] .grid, [data-premium-studio] .space-y-5 { min-width: 0 !important; max-width: 100% !important; }
+  [data-premium-studio] button, [data-premium-studio] input, [data-premium-studio] textarea, [data-premium-studio] select { max-width: 100% !important; }
+  [data-premium-studio] section.grid > div:first-child, [data-premium-studio] section.grid > div:first-child > div:first-child { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+  [data-premium-studio] section.grid > div:first-child > div:first-child > button { display: flex !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; overflow: hidden !important; box-sizing: border-box !important; }
+  [data-premium-studio] section.grid > div:first-child > div:first-child > button > span:nth-child(2) { min-width: 0 !important; max-width: 100% !important; flex: 1 1 0% !important; overflow: hidden !important; }
+  [data-premium-studio] section.grid > div:first-child > div:first-child > button > span:nth-child(2) > span { min-width: 0 !important; max-width: 100% !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+  [data-premium-studio] h1, [data-premium-studio] h2, [data-premium-studio] h3, [data-premium-studio] p, [data-premium-studio] span { overflow-wrap: anywhere; }
+  nav[aria-label="Navigasi Studio Musik"] { position: fixed !important; left: 0 !important; right: 0 !important; bottom: 0 !important; top: auto !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; transform: none !important; }
+  nav[aria-label="Navigasi Studio Musik"] > div { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; width: 100% !important; max-width: 100% !important; min-width: 0 !important; margin: 0 !important; padding: 8px 2px !important; gap: 0 !important; overflow: hidden !important; box-sizing: border-box !important; }
+  nav[aria-label="Navigasi Studio Musik"] > div > button { display: flex !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; flex: none !important; margin: 0 !important; padding: 8px 1px !important; white-space: normal !important; text-align: center !important; align-items: center !important; justify-content: center !important; overflow: hidden !important; box-sizing: border-box !important; }
+  nav[aria-label="Navigasi Studio Musik"] > div > button > span { display: block !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; overflow: hidden !important; overflow-wrap: anywhere !important; word-break: break-word !important; line-height: 1.1 !important; text-align: center !important; }
 }
