@@ -171,8 +171,8 @@ function requestedStyleTokens(rawStyle: string, tempo: number, instrumental: boo
   const positive: string[] = [];
   const negative = new Set<string>();
   const add = (...v: string[]) => v.forEach(x => { if (!positive.includes(x)) positive.push(x); });
-  if (/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) add("deep devotional qasidah", "sholawat melodic phrasing", "Islamic devotional melody", "spiritual Middle Eastern melodic ornamentation", "reverent expressive vocal delivery", "warm frame-drum and hand-percussion colors");
-  if (/dangdut/.test(s)) add("strong Indonesian dangdut groove", "kendang-style rhythmic accents", "syncopated dangdut bass", "punchy kick and percussion", "ornamental dangdut melodic phrasing", "lively rhythmic fills");
+  if (/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) add("deep devotional qasidah", "sholawat melodic phrasing", "Arabic/Islamic melodic ornamentation", "rebana and frame-drum pulse", "reverent devotional cadence");
+  if (/dangdut/.test(s)) add("authentic Indonesian dangdut groove", "kendang dangdut rhythm", "dangdut vocal cengkok", "ornamental dangdut melisma", "punchy kendang fills");
   if (/slow|lambat|syahdu|sendu/.test(s)) add("slow devotional pacing", "spacious emotional phrasing", "gentle dynamics");
   if (/pop/.test(s)) add("modern pop songwriting", "polished pop arrangement");
   if (/rock/.test(s)) add("rock rhythm section", "electric guitar driven arrangement");
@@ -182,7 +182,7 @@ function requestedStyleTokens(rawStyle: string, tempo: number, instrumental: boo
   if (/ambon/.test(s)) add("Ambon melodic character", "warm Eastern Indonesian phrasing");
   if (/dj|edm|electronic/.test(s)) add("DJ/electronic rhythmic production");
   if (tempo > 0) add(`${tempo} BPM`);
-  add("crystal-clear lead vocal", "bright warm full-bodied vocal", "clean controlled vibrato", "tasteful melisma and cengkok", "punchy clean low end", "clear separated mids", "open non-harsh highs", "modern polished commercial mix");
+  add("crystal-clear lead vocal", "bright warm full-bodied vocal", "clean controlled vibrato", "style-appropriate melodic ornamentation", "punchy clean low end", "clear separated mids", "open non-harsh highs", "modern polished commercial mix");
   const dominant = [
     ["pop", "pop"], ["rock", "rock"], ["reggae", "reggae"], ["dangdut", "dangdut"], ["dj|edm|electronic", "electronic/dance"], ["hip.?hop|rap", "hip-hop"], ["country", "country"], ["metal", "metal"], ["jazz", "jazz"], ["classical|orchestral", "orchestral"],
   ];
@@ -195,6 +195,19 @@ function requestedStyleTokens(rawStyle: string, tempo: number, instrumental: boo
   if (!/country/.test(s)) negative.add("country");
   if (!/metal/.test(s)) negative.add("metal");
   if (!/dangdut/.test(s)) negative.add("dangdut");
+  if (!/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) {
+    negative.add("qasidah devotional music");
+    negative.add("Islamic devotional chant");
+    negative.add("rebana/frame-drum ensemble");
+  }
+  if (!/dangdut/.test(s)) {
+    negative.add("dangdut kendang groove");
+    negative.add("dangdut cengkok vocals");
+  }
+  negative.add("generic band arrangement");
+  negative.add("straight pop band");
+  negative.add("rock band");
+  negative.add("flat band-style vocals");
   if (instrumental) negative.add("lead vocals and lyrics");
   return { positive, negative: [...negative] };
 }
@@ -207,23 +220,26 @@ function buildPremiumMusicDirective(body: Record<string, unknown>) {
   const instrumental = body.instrumental === true;
   const referenceId = String(body.reference_id || "").trim();
   const vocalId = String(body.vocal_id || "").trim();
+  const lyrics = String(body.lyrics || "");
+  const hasArabicLyrics = /[\u0600-\u06FF]/.test(lyrics);
   const styleTokens = requestedStyleTokens(rawStyle, tempo, instrumental);
   const targetDurationMs = Number(body.reference_duration_ms || 0);
   const targetDuration = Number.isFinite(targetDurationMs) && targetDurationMs >= 10000 ? `${Math.round(targetDurationMs / 1000)} seconds` : "";
   return [
     "SALVIAN AI PREMIUM MUSIC + VOCAL STANDARD. HARD STYLE LOCK: the user's explicit style/concept is mandatory and has priority over generic model defaults.",
     `REQUESTED STYLE (DO NOT SUBSTITUTE): ${rawStyle || "follow the user's controls exactly"}.`,
-    `English style anchors: ${styleTokens.positive.slice(0, 14).join(", ")}.`,
+    `English style anchors: ${styleTokens.positive.slice(0, 18).join(", ")}.`,
     `English styles to avoid unless explicitly requested: ${styleTokens.negative.join(", ")}.`,
     `Language: ${language}.`,
     gender ? `Preferred vocal gender: ${gender}.` : "",
     instrumental ? "INSTRUMENTAL ONLY; no vocals." : "",
     "VOCAL CLARITY LOCK: exceptionally clear, bright, clean, warm, full-bodied, present and intelligible. Every Indonesian consonant, vowel, syllable and word ending must remain audible. No mumbling, swallowed words, foreign-language drift, nasal/dull tone, robotic tone, buried vocal or excessive reverb.",
-    "VOCAL EXPRESSION: natural confident singing with beautiful melodic dangdut-style cengkok and tasteful melisma/vibrato where appropriate. Cengkok decorates sustained vowels and never obscures lyric words. Vocal is merdu, lantang, terang, emotional and controlled, never harsh.",
-    "QASIDAH/SHOLAWAT LOCK: if qasidah, sholawat, religi or Islami is requested, the Islamic devotional identity must be obvious and deep in the melody, phrasing, ornamentation, cadence and atmosphere. Do not turn it into generic pop or unrelated dance music.",
-    "DANGDUT SHOLAWAT LOCK: if dangdut + sholawat/religi is requested, keep strong dangdut groove, kendang-style accents, bass/kick drive, fills and melodic ornaments while the sholawat melodic identity stays prominent. If slow is requested, remain slow and devotional.",
-    "MUSIC + MIX STANDARD: punchy but smooth; strong clean kick/bass; rhythmic accents and tasteful fills/transitions; full round low end; clean mids; open bright highs; separated instruments; controlled dynamics; no muddy bass, boxy mids, harsh highs or clipping.",
+    "VOCAL EXPRESSION LOCK: never use a flat generic band-style vocal. Use a confident, merdu, lantang, bening and terang lead vocal with natural breath, controlled vibrato, expressive dynamics, tasteful melisma and style-appropriate ornamentation. When dangdut is requested, use authentic dangdut cengkok and ornamental turns; cengkok decorates sustained vowels without hiding consonants or lyric words.",
+    "QASIDAH/SHOLAWAT LOCK: when qasidah, sholawat, religi or Islami is requested, make the devotional identity unmistakable and emotionally deep in the melody, cadence, ornamentation and atmosphere: qasidah melodic movement, Arabic/Islamic phrasing, rebana/frame-drum colors and reverent call-and-response feeling. Never default to a generic pop/rock band.",
+    "DANGDUT SHOLAWAT LOCK: when dangdut + sholawat/religi is requested, the rhythm must unmistakably sound dangdut: kendang-led groove, syncopated dangdut bass, punchy kick, tasteful fills and rhythmic breaks, with the sholawat/qasidah melody as the emotional center. If slow is requested, keep the dangdut-sholawat identity slow, deep and devotional rather than turning into a pop ballad.",
+    "MUSIC + MIX STANDARD: punchy but smooth; strong clean kick/bass; rhythmic accents and tasteful fills/transitions; full round low end; clean mids; open bright highs; separated instruments; controlled dynamics; polished modern commercial/trend-ready production; no muddy bass, boxy mids, harsh highs or clipping.",
     "LYRIC LOCK: supplied lyrics are sacred input. Preserve every word, line and original order exactly. Never rewrite, paraphrase, translate, summarize, invent, omit, duplicate or replace words. Fit the exact lyrics into musical phrases naturally.",
+    hasArabicLyrics ? "ARABIC LYRIC DICTION LOCK: sing every supplied Arabic word exactly and in order. Preserve supplied spelling and word boundaries; use clear Arabic makhraj, distinct consonants, accurate vowels, clean syllable timing and audible word endings. Never transliterate, translate, rewrite, merge, invent, omit or blur Arabic words into Indonesian-sounding phonemes." : "",
     referenceId ? "AUDIO REFERENCE ACTIVE: use the reference as a primary guide for groove, beat placement, tempo feel, melodic contour, vocal melody, phrasing, arrangement flow, sections, transitions and production character. Preserve its recognizable musical logic while making an original result." : "",
     vocalId ? "VOCAL REFERENCE ACTIVE: preserve the selected vocal identity/timbre while applying the clear, bright, warm and expressive vocal standard." : "",
     referenceId && vocalId ? "REFERENCE + VOCAL: keep both the reference music direction and selected vocal identity; never replace either with a generic default." : "",
@@ -248,6 +264,12 @@ function buildElevenPrompt(body: Record<string, unknown>) {
   ].filter(Boolean).join("\n\n").slice(0, 4100);
 }
 
+function normalizeElevenCompositionPlan(plan: any) {
+  if (!plan || typeof plan !== "object") return plan;
+  const { music_length_ms: _musicLengthMs, model_id: _modelId, prompt: _prompt, ...cleanPlan } = plan;
+  return cleanPlan;
+}
+
 function enforceElevenPlan(plan: any, body: Record<string, unknown>) {
   if (!plan || !Array.isArray(plan.chunks) || !plan.chunks.length) return plan;
   const rawStyle = String(body.style || "").trim();
@@ -255,12 +277,15 @@ function enforceElevenPlan(plan: any, body: Record<string, unknown>) {
   const instrumental = body.instrumental === true;
   const locks = requestedStyleTokens(rawStyle, tempo, instrumental);
   const lyrics = String(body.lyrics || "").trim();
+  const hasArabicLyrics = /[\u0600-\u06FF]/.test(lyrics);
   const lines = instrumental ? [] : lyrics.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   const chunks = plan.chunks.map((chunk: any, index: number) => {
     const positive = Array.isArray(chunk.positive_styles) ? chunk.positive_styles.map(String) : [];
     const negative = Array.isArray(chunk.negative_styles) ? chunk.negative_styles.map(String) : [];
-    const mergedPositive = [...locks.positive.slice(0, index === 0 ? 16 : 10), ...positive].filter((v, i, a) => a.indexOf(v) === i).slice(0, 50);
-    const mergedNegative = [...locks.negative, ...negative].filter((v, i, a) => a.indexOf(v) === i).slice(0, 50);
+    const arabicPositive = hasArabicLyrics ? ["clear Arabic diction", "accurate Arabic makhraj", "distinct Arabic consonants and vowels", "audible Arabic word endings"] : [];
+    const arabicNegative = hasArabicLyrics ? ["mumbled Arabic", "blurred Arabic syllables", "mispronounced Arabic", "foreign-language drift"] : [];
+    const mergedPositive = [...locks.positive.slice(0, index === 0 ? 16 : 10), ...arabicPositive, ...positive].filter((v, i, a) => a.indexOf(v) === i).slice(0, 50);
+    const mergedNegative = [...locks.negative, ...arabicNegative, ...negative].filter((v, i, a) => a.indexOf(v) === i).slice(0, 50);
     const next: any = { ...chunk, positive_styles: mergedPositive, negative_styles: mergedNegative, context_adherence: "high" };
     if (lines.length) {
       const total = plan.chunks.length;
@@ -285,7 +310,7 @@ async function elevenCompose(body: Record<string, unknown>) {
     cache: "no-store",
   });
   const planData = await readJson(planResponse) as any;
-  const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? enforceElevenPlan(planData, body) : null;
+  const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? normalizeElevenCompositionPlan(enforceElevenPlan(planData, body)) : null;
   const requestBody: Record<string, unknown> = { model_id: "music_v2_5", force_instrumental: body.instrumental === true, store_for_inpainting: false };
   if (compositionPlan) {
     const conditioningIds = [body.reference_id, body.vocal_id].filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
