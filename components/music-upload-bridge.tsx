@@ -14,18 +14,18 @@ export default function MusicUploadBridge() {
 
       // All Stage-1 reference/remix uploads use storage first. The browser
       // never pushes a large audio file through a Vercel Function request body.
-      // This keeps the proven Mureka/Eleven flow and now applies the same
-      // handoff to Suno reference and voice uploads.
+      // Suno voice uploads use the same storage-first handoff; Mureka/Eleven
+      // vocal uploads intentionally keep their existing direct-file paths.
       if (url === "/api/music/upload" && body instanceof FormData) {
         const purpose = String(body.get("purpose") || "reference").toLowerCase();
         const engine = String(body.get("engine") || "mureka").toLowerCase();
         const file = body.get("file");
+        const shouldStorageFirst =
+          file instanceof File &&
+          (purpose === "reference" || purpose === "remix" || (purpose === "voice" && engine === "suno_v6")) &&
+          (engine === "mureka" || engine === "eleven_music_v2_5" || engine === "suno_v6");
 
-        if (
-          (purpose === "reference" || purpose === "remix" || purpose === "voice") &&
-          (engine === "mureka" || engine === "eleven_music_v2_5" || engine === "suno_v6") &&
-          file instanceof File
-        ) {
+        if (shouldStorageFirst) {
           try {
             const blob = await upload(`salvian-music/${crypto.randomUUID()}-${file.name}`, file, {
               access: "public",
@@ -40,8 +40,7 @@ export default function MusicUploadBridge() {
             handoff.append("engine", engine);
 
             // Suno gets its own server-side handoff because its provider API
-            // requires the API key to stay server-side. Mureka and Eleven keep
-            // using the existing verified /api/music/upload route.
+            // requires the API key to stay server-side.
             if (engine === "suno_v6") {
               return originalFetch("/api/music/suno-upload", {
                 ...init,
@@ -51,7 +50,7 @@ export default function MusicUploadBridge() {
 
             // Normalize legacy "remix" uploads and current references into the
             // same storage-first Stage-1 path used by the verified flow.
-            if (purpose !== "voice") handoff.set("purpose", "reference");
+            handoff.set("purpose", "reference");
             return originalFetch("/api/music/upload", {
               ...init,
               body: handoff,
