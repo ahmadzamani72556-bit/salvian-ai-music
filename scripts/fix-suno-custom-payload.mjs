@@ -38,6 +38,21 @@ const occurrences = source.split(oldBlock).length - 1;
 if (occurrences !== 1) throw new Error(`Expected exactly one Suno custom payload anchor, found ${occurrences}.`);
 source = source.replace(oldBlock, newBlock);
 
+// Layer 2 Suno reference/voice requests must stay below the provider's 3000-character
+// prompt ceiling. Keep the user's lyrics and style, but never let the quality-lock
+// directive expand into a 4k+ provider prompt. Layer 1 upload/reference routes are untouched.
+const oldReferenceLyrics = 'lyrics: lyrics.slice(0, 3000), style_requirements: premiumDirective,';
+const newReferenceLyrics = 'lyrics: lyrics.slice(0, 1100), style_requirements: premiumDirective.slice(0, 1800),';
+const referenceOccurrences = source.split(oldReferenceLyrics).length - 1;
+if (referenceOccurrences !== 2) throw new Error(`Expected exactly two Suno cover lyric/style anchors, found ${referenceOccurrences}.`);
+source = source.replaceAll(oldReferenceLyrics, newReferenceLyrics);
+
+const oldSourcePrompt = 'prompt: `${premiumDirective}\\n\\nLYRICS:\\n${lyrics.slice(0, 3000)}`, customMode: true, style: premiumDirective,';
+const newSourcePrompt = 'prompt: `${premiumDirective.slice(0, 1800)}\\n\\nLYRICS:\\n${lyrics.slice(0, 1100)}`.slice(0, 2950), customMode: true, style: premiumDirective.slice(0, 1800),';
+const sourcePromptOccurrences = source.split(oldSourcePrompt).length - 1;
+if (sourcePromptOccurrences !== 1) throw new Error(`Expected exactly one Suno source prompt anchor, found ${sourcePromptOccurrences}.`);
+source = source.replace(oldSourcePrompt, newSourcePrompt);
+
 // Suno's current query contract expects song_ids as a comma-separated string.
 // Normalize the status payload at build time so the runtime route can never send [taskId].
 const oldStatusBlock = 'body: JSON.stringify({ song_ids: [taskId], model: "suno-v6" })';
@@ -47,4 +62,4 @@ if (statusOccurrences !== 1) throw new Error(`Expected exactly one Suno status p
 source = source.replace(oldStatusBlock, newStatusBlock);
 
 fs.writeFileSync(file, source, "utf8");
-console.log("Suno quality/style/status guard applied: user style preserved, genre-specific locks expanded, vocal cengkok/rounded-tone locks added, style_tags <= 1000, lyrics <= 3000, negative_tags <= 1000, and song query IDs normalized to the current API contract.");
+console.log("Suno quality/style/status guard applied: user style preserved, genre-specific locks expanded, vocal cengkok/rounded-tone locks added, Layer 2 reference/source prompts capped below 3000, style_tags <= 1000, lyrics <= 3000, negative_tags <= 1000, and song query IDs normalized to the current API contract.");
