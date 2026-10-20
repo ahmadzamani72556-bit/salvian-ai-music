@@ -19,6 +19,25 @@ async function elevenUpload(file:File){if(!ELEVEN_API_KEY)throw new Error("ELEVE
 async function sunoUpload(file:File,purpose:"reference"|"voice"){if(!SUNO_API_KEY)throw new Error("SUNO_API_KEY belum tersedia di Vercel.");const form=new FormData();form.append("file",file,file.name);form.append("file_name",file.name);form.append("model","suno-v6");let path="/api/music/upload-source";form.append("upload_type","file_upload");if(purpose==="voice"){path="/api/music/voice-profile/create";form.append("title",file.name.replace(/\.[^.]+$/i,"").slice(0,80));form.append("source_kind","upload");}const response=await fetch(`${SUNO_API_BASE_URL}${path}`,{method:"POST",headers:{Authorization:`Bearer ${SUNO_API_KEY}`,Accept:"application/json"},body:form,cache:"no-store"});const data=await json(response);if(!response.ok||data?.success===false||(data?.code&&data.code!==200))throw new Error(data?.message||data?.error?.message||`Suno upload ${response.status}`);const payload=data?.data||data;const id=purpose==="voice"?payload?.voice_id:(payload?.clip_id||payload?.song_id||payload?.id);if(!id)throw new Error(`Suno tidak mengembalikan ID ${purpose==="voice"?"voice profile":"source audio"}.`);return{id:String(id),data};}
 function stage2CookieOptions(path="/api/music"){return{httpOnly:true,secure:process.env.NODE_ENV==="production",sameSite:"lax" as const,path,maxAge:60*60};}
 
+function isTrustedBlobUrl(value:string){
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname.endsWith(".public.blob.vercel-storage.com");
+  } catch { return false; }
+}
+
+async function fileFromBlobUrl(url:string,name:string){
+  if(!isTrustedBlobUrl(url)) throw new Error("Audio Referensi tidak berasal dari penyimpanan SALVIAN yang valid.");
+  const response=await fetch(url,{cache:"no-store"});
+  if(!response.ok) throw new Error(`Gagal membaca Audio Referensi dari penyimpanan (${response.status}).`);
+  const contentLength=Number(response.headers.get("content-length")||0);
+  if(contentLength>10*1024*1024) throw new Error("Audio Referensi melebihi batas 10 MB.");
+  const buffer=await response.arrayBuffer();
+  if(buffer.byteLength>10*1024*1024) throw new Error("Audio Referensi melebihi batas 10 MB.");
+  const contentType=response.headers.get("content-type")||"audio/mpeg";
+  return new File([buffer],name,{type:contentType});
+}
+
 export async function POST(request:NextRequest){try{const form=await request.formData();const rawFile=form.get("file");const fileUrl=String(form.get("file_url")||"").trim();const requestedPurpose=String(form.get("purpose")||"reference").toLowerCase();const engine=String(form.get("engine")||"mureka").toLowerCase();const purpose:"reference"|"voice"|"remix"=requestedPurpose==="voice"?"voice":requestedPurpose==="remix"?"remix":"reference";if(!(rawFile instanceof File)&&!fileUrl)return NextResponse.json({success:false,error:"File audio belum dipilih."},{status:400});if(rawFile instanceof File&&rawFile.size>10*1024*1024)return NextResponse.json({success:false,error:`File ${(rawFile.size/1024/1024).toFixed(2)} MB terlalu besar. Batas upload adalah 10 MB.`},{status:413});const file=rawFile instanceof File?rawFile:null;const name=String(form.get("file_name")||file?.name||fileUrl.split("/").pop()||"audio.mp3").toLowerCase();if(!(name.endsWith(".mp3")||name.endsWith(".m4a")||(engine==="suno_v6"&&(name.endsWith(".wav")||name.endsWith(".aac")||name.endsWith(".flac")||name.endsWith(".ogg")))))return NextResponse.json({success:false,error:"Format audio yang didukung: MP3 atau M4A (Suno juga menerima WAV, AAC, FLAC, dan OGG)."},{status:400});
 
 let result:{id:string;data:unknown};let stage2RemixId="";let referenceId="";let referenceWarning="";
@@ -31,22 +50,19 @@ if(engine==="mureka"){
    result={id:fileUrl,data:{url:fileUrl,stored:true,stage1:true}};
  }
  else if(purpose==="remix"){
-   // Legacy direct-file callers are still supported for small files, but the
-   // current browser flow never reaches this branch because it uses Blob.
    result=await murekaUpload(file!,"remix",30000);stage2RemixId=result.id;
  }
  else {
-   // Direct-file fallback for older clients. The current 10 MB browser path
-   // uses Blob before this route, avoiding the Vercel 4.5 MB function limit.
    result=await murekaUpload(file!,"reference",30000);referenceId=result.id;
  }
-} else if(engine==="eleven_music_v2_5"){if(!file)throw new Error("Eleven Music memerlukan file langsung.");result=await elevenUpload(file);referenceId=result.id;}
+} else if(engine==="eleven_music_v2_5"){
+  const sourceFile=file || (fileUrl ? await fileFromBlobUrl(fileUrl,name) : null);
+  if(!sourceFile) throw new Error("Eleven Music memerlukan file audio.");
+  result=await elevenUpload(sourceFile); referenceId=result.id;
+}
 else if(engine==="suno_v6"){if(!file)throw new Error("Suno memerlukan file langsung.");if(purpose==="remix")return NextResponse.json({success:false,error:"Mode Remix penuh saat ini hanya tersedia untuk Mureka."},{status:400});result=await sunoUpload(file,purpose==="voice"?"voice":"reference");referenceId=result.id;}
 else return NextResponse.json({success:false,error:"Mesin musik tidak dikenal."},{status:400});
 if(!result.id||typeof result.id!=="string")throw new Error("Mesin musik tidak mengembalikan ID audio yang dapat digunakan.");
-// For Blob-backed Stage-1 uploads, the storage URL is the reference handle.
-// Returning it as `id` keeps the existing client state wired to the exact
-// audio that was selected, while Stage-2 performs the real Mureka upload.
 const stage2ClientId=referenceId||fileUrl||"";
 const response=NextResponse.json({success:true,id:stage2ClientId||result.id,reference_id:referenceId||fileUrl||null,reference_url:fileUrl||null,purpose:purpose==="remix"?"reference":purpose,engine,stage2Reference:Boolean(referenceId||fileUrl),stage2Ready:Boolean(stage2RemixId),remix_upload_id:stage2RemixId||null,warning:referenceWarning||null,data:result.data});
 if(stage2RemixId&&engine==="mureka"){response.cookies.set("salvian_stage2_pending","1",stage2CookieOptions("/api/music"));response.cookies.set("salvian_stage2_remix_id",stage2RemixId,stage2CookieOptions("/api/music"));response.cookies.set("salvian_stage2_remix_id_root",stage2RemixId,stage2CookieOptions("/"));}
