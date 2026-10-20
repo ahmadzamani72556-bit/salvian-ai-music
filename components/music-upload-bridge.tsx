@@ -18,10 +18,11 @@ export default function MusicUploadBridge() {
       const url = requestUrl(input);
       const body = init?.body;
 
-      // ROOT FIX: Mureka Stage-2 Audio Referensi follows the verified
-      // Mureka flow: browser -> Vercel Blob (multipart) -> reference URL ->
-      // /api/music/remix -> Mureka. Do not send the reference file through
-      // the generic /api/music/upload storage-only path.
+      // VERIFIED REFERENCE FLOW:
+      // browser -> Vercel Blob multipart -> provider-specific handoff.
+      // Mureka and Suno both keep the browser file out of the provider API
+      // upload request. The provider receives the stable Blob URL through its
+      // dedicated handoff route, exactly like the already-working Mureka path.
       if (url.endsWith("/api/music/upload") && body instanceof FormData) {
         const purpose = String(body.get("purpose") || "reference").toLowerCase();
         const engine = String(body.get("engine") || "mureka").toLowerCase();
@@ -71,11 +72,18 @@ export default function MusicUploadBridge() {
           }
         }
 
-        // Keep the existing storage-first flow for Eleven Music and Suno,
-        // plus Suno voice uploads. Mureka vocal cloning remains direct-file.
+        // Suno reference/voice and the existing Mureka/Eleven auxiliary uploads
+        // use the same storage-first handoff. This is the Suno equivalent of
+        // the verified Mureka reference flow: upload once to Blob, then hand
+        // the Blob URL to /api/music/suno-upload. Never send the raw browser
+        // File directly to the Suno provider from this bridge.
         const shouldStorageFirst =
           file instanceof File &&
-          (purpose === "remix" || (purpose === "voice" && engine === "suno_v6")) &&
+          (
+            purpose === "remix" ||
+            (engine === "suno_v6" && (purpose === "reference" || purpose === "voice")) ||
+            (purpose === "voice" && engine !== "mureka")
+          ) &&
           (engine === "mureka" || engine === "eleven_music_v2_5" || engine === "suno_v6");
 
         if (shouldStorageFirst) {
