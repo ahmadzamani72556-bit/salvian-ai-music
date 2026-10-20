@@ -1,81 +1,118 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 const file = "app/api/music/route.ts";
-let s = readFileSync(file, "utf8");
+let source = readFileSync(file, "utf8");
 
-const replace = (oldText, newText, label) => {
-  if (!s.includes(oldText)) throw new Error(`Music 2.5 patch anchor not found: ${label}`);
-  s = s.replace(oldText, newText);
+// This script runs immediately before `next build` on Vercel. Keep it idempotent:
+// never fail just because a previous deployment already contains the hardening.
+const replaceOnce = (pattern, replacement) => {
+  const next = source.replace(pattern, replacement);
+  if (next !== source) source = next;
 };
 
-replace(`  if (/dj|edm|electronic/.test(s)) add("DJ/electronic rhythmic production");
-  if (tempo > 0) add(\`${tempo} BPM\`);
-  add("crystal-clear lead vocal", "bright warm full-bodied vocal", "clean controlled vibrato", "tasteful melisma and cengkok", "punchy clean low end", "clear separated mids", "open non-harsh highs", "modern polished commercial mix");`,
-`  if (/dj|edm|electronic/.test(s)) add("DJ/electronic rhythmic production");
-  if (/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) add("deep devotional qasidah", "sholawat melodic phrasing", "Arabic/Islamic melodic ornamentation", "rebana and frame-drum pulse", "reverent devotional cadence");
-  if (/dangdut/.test(s)) add("authentic Indonesian dangdut groove", "kendang dangdut rhythm", "dangdut vocal cengkok", "ornamental dangdut melisma", "punchy kendang fills");
-  if (tempo > 0) add(\`${tempo} BPM\`);
-  add("crystal-clear lead vocal", "bright warm full-bodied vocal", "clean controlled vibrato", "tasteful melisma and cengkok", "punchy clean low end", "clear separated mids", "open non-harsh highs", "modern polished commercial mix");`, "style positives");
-
-replace(`  if (!/dangdut/.test(s)) negative.add("dangdut");
-  if (instrumental) negative.add("lead vocals and lyrics");`,
-`  if (!/dangdut/.test(s)) negative.add("dangdut");
-  if (!/qasidah|sholawat|selawat|religi|islami|islamic/.test(s)) {
-    negative.add("qasidah devotional music");
-    negative.add("Islamic devotional chant");
-    negative.add("rebana/frame-drum ensemble");
-  }
-  if (!/dangdut/.test(s)) {
-    negative.add("dangdut kendang groove");
-    negative.add("dangdut cengkok vocals");
-  }
-  negative.add("generic band arrangement");
-  negative.add("straight pop band");
-  negative.add("rock band");
-  negative.add("flat band-style vocals");
-  if (instrumental) negative.add("lead vocals and lyrics");`, "style negatives");
-
-replace(`  const vocalId = String(body.vocal_id || "").trim();
-  const styleTokens = requestedStyleTokens(rawStyle, tempo, instrumental);`,
-`  const vocalId = String(body.vocal_id || "").trim();
-  const lyrics = String(body.lyrics || "");
-  const hasArabicLyrics = /[\\u0600-\\u06FF]/.test(lyrics);
-  const styleTokens = requestedStyleTokens(rawStyle, tempo, instrumental);`, "arabic detection");
-
-replace(`    "VOCAL EXPRESSION: natural confident singing with beautiful melodic dangdut-style cengkok and tasteful melisma/vibrato where appropriate. Cengkok decorates sustained vowels and never obscures lyric words. Vocal is merdu, lantang, terang, emotional and controlled, never harsh.",
-    "QASIDAH/SHOLAWAT LOCK: if qasidah, sholawat, religi or Islami is requested, the Islamic devotional identity must be obvious and deep in the melody, phrasing, ornamentation, cadence and atmosphere. Do not turn it into generic pop or unrelated dance music.",
-    "DANGDUT SHOLAWAT LOCK: if dangdut + sholawat/religi is requested, keep strong dangdut groove, kendang-style accents, bass/kick drive, fills and melodic ornaments while the sholawat melodic identity stays prominent. If slow is requested, remain slow and devotional.",`,
-`    "VOCAL EXPRESSION LOCK: do not sing with a flat band-style pop delivery. Use authentic dangdut vocal cengkok, ornamental turns, controlled melisma and expressive vibrato; phrases must rise and fall naturally, with strong sustained notes and tasteful vocal answers. Cengkok decorates vowels but never hides consonants or lyric words. Vocal is merdu, lantang, terang, emotional and controlled.",
-    "QASIDAH/SHOLAWAT LOCK: when qasidah, sholawat, religi or Islami is requested, make the devotional identity unmistakable in melody, cadence, ornamentation and atmosphere: qasidah melodic movement, Arabic/Islamic phrasing, rebana/frame-drum colors and reverent call-and-response feeling. Never default to a generic pop/rock band.",
-    "DANGDUT SHOLAWAT LOCK: when dangdut + sholawat/religi is requested, the rhythm must unmistakably sound dangdut: kendang-led groove, syncopated dangdut bass, punchy kick, fills and rhythmic breaks, with the sholawat/qasidah melody remaining the emotional center. If slow is requested, keep the dangdut-sholawat identity slow, deep and devotional rather than turning into a pop ballad.",
-    hasArabicLyrics ? "ARABIC LYRIC DICTION LOCK: sing every supplied Arabic word exactly and in order. Preserve word boundaries and supplied spelling; use clear Arabic makhraj, distinct consonants, accurate vowels, clean syllable timing and audible word endings. Never transliterate, translate, replace, merge, invent or blur Arabic words into Indonesian-sounding phonemes." : "",`, "premium vocal locks");
-
-replace(`function enforceElevenPlan(plan: any, body: Record<string, unknown>) {`,
-`function normalizeElevenCompositionPlan(plan: any) {
-  if (!plan || typeof plan !== "object") return plan;
-  const { music_length_ms: _musicLengthMs, model_id: _modelId, prompt: _prompt, ...cleanPlan } = plan;
-  return cleanPlan;
+// Eleven Music v2/v2.5 composition plans are mutually exclusive with prompt and
+// music_length_ms at /v1/music. Strip any provider-generated top-level metadata
+// and defensively remove the same forbidden fields if a provider nests them.
+replaceOnce(
+  /function normalizeElevenCompositionPlan\(plan: any\) \{[\s\S]*?\n\}\n\nfunction enforceElevenPlan/,
+  `function normalizeElevenCompositionPlan(plan: any) {
+  const stripForbidden = (value: any): any => {
+    if (Array.isArray(value)) return value.map(stripForbidden);
+    if (!value || typeof value !== "object") return value;
+    const output: Record<string, any> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "music_length_ms" || key === "model_id" || key === "prompt") continue;
+      output[key] = stripForbidden(child);
+    }
+    return output;
+  };
+  return stripForbidden(plan);
 }
 
-function enforceElevenPlan(plan: any, body: Record<string, unknown>) {`, "plan sanitizer");
+function enforceElevenPlan`
+);
 
-replace(`  const lyrics = String(body.lyrics || "").trim();
-  const lines = instrumental ? [] : lyrics.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean);
-  const chunks = plan.chunks.map((chunk: any, index: number) => {`,
-`  const lyrics = String(body.lyrics || "").trim();
+// With a composition_plan, only plan-compatible generation controls belong in
+// the /v1/music body. In particular, force_instrumental and music_length_ms are
+// prompt-mode controls and must not be sent with a plan.
+replaceOnce(
+  /const requestBody: Record<string, unknown> = \{ model_id: "music_v2_5", force_instrumental: body\.instrumental === true, store_for_inpainting: false \};/,
+  `const requestBody: Record<string, unknown> = { model_id: "music_v2_5", store_for_inpainting: false };`
+);
+
+// If the generated plan is used, make the first chunk the strongest genre/style
+// anchor. The provider docs state that the first chunk establishes the tone and
+// genre for the rest of the song. Preserve section-specific styles only when
+// they do not directly contradict the user's requested genre.
+replaceOnce(
+  /function enforceElevenPlan\(plan: any, body: Record<string, unknown>\) \{[\s\S]*?\n\}\n\nasync function elevenCompose/,
+  `function enforceElevenPlan(plan: any, body: Record<string, unknown>) {
+  if (!plan || !Array.isArray(plan.chunks) || !plan.chunks.length) return plan;
+  const rawStyle = String(body.style || "").trim();
+  const tempo = Number(body.tempo || 0);
+  const instrumental = body.instrumental === true;
+  const locks = requestedStyleTokens(rawStyle, tempo, instrumental);
+  const lyrics = String(body.lyrics || "").trim();
   const hasArabicLyrics = /[\\u0600-\\u06FF]/.test(lyrics);
   const lines = instrumental ? [] : lyrics.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean);
-  const chunks = plan.chunks.map((chunk: any, index: number) => {`, "plan arabic detection");
-
-replace(`    const mergedPositive = [...locks.positive.slice(0, index === 0 ? 16 : 10), ...positive].filter((v, i, a) => a.indexOf(v) === i).slice(0, 50);
-    const mergedNegative = [...locks.negative, ...negative].filter((v, i, a) => a.indexOf(v) === i).slice(0, 50);`,
-`    const arabicPositive = hasArabicLyrics ? ["clear Arabic diction", "accurate Arabic makhraj", "distinct Arabic consonants and vowels", "audible Arabic word endings"] : [];
+  const requested = rawStyle.toLowerCase();
+  const genreFamilies: Array<[RegExp, RegExp]> = [
+    [/dangdut/, /\\bdangdut\\b|kendang|cengkok/],
+    [/qasidah|sholawat|selawat|religi|islami|islamic/, /qasidah|sholawat|selawat|islamic|devotional|rebana|frame.?drum/],
+    [/pop/, /\\bpop\\b/],
+    [/rock/, /\\brock\\b|guitar.?driven/],
+    [/reggae/, /reggae/],
+    [/minang/, /minang/],
+    [/melayu/, /melayu/],
+    [/ambon/, /ambon/],
+    [/jazz/, /jazz/],
+    [/country/, /country/],
+    [/hip.?hop|rap/, /hip.?hop|rap/],
+    [/metal/, /metal/],
+    [/dj|edm|electronic/, /dj|edm|electronic|dance/],
+    [/classical|orchestral/, /classical|orchestral/],
+  ];
+  const conflicts = genreFamilies
+    .filter(([wanted]) => !wanted.test(requested))
+    .map(([, family]) => family);
+  const conflictsRequested = genreFamilies.filter(([wanted]) => wanted.test(requested)).map(([, family]) => family);
+  const conflictsForText = (text: string) => conflicts.some(pattern => pattern.test(text)) && !conflictsRequested.some(pattern => pattern.test(text));
+  const chunks = plan.chunks.map((chunk: any, index: number) => {
+    const generatedPositive = Array.isArray(chunk.positive_styles) ? chunk.positive_styles.map(String) : [];
+    const generatedNegative = Array.isArray(chunk.negative_styles) ? chunk.negative_styles.map(String) : [];
+    const arabicPositive = hasArabicLyrics ? ["clear Arabic diction", "accurate Arabic makhraj", "distinct Arabic consonants and vowels", "audible Arabic word endings"] : [];
     const arabicNegative = hasArabicLyrics ? ["mumbled Arabic", "blurred Arabic syllables", "mispronounced Arabic", "foreign-language drift"] : [];
-    const mergedPositive = [...locks.positive.slice(0, index === 0 ? 16 : 10), ...arabicPositive, ...positive].filter((v, i, a) => a.indexOf(v) === i).slice(0, 50);
-    const mergedNegative = [...locks.negative, ...arabicNegative, ...negative].filter((v, i, a) => a.indexOf(v) === i).slice(0, 50);`, "plan locks");
+    const safeGeneratedPositive = generatedPositive.filter(value => !conflictsForText(value));
+    const safeGeneratedNegative = generatedNegative.filter(value => !conflictsRequested.some(pattern => pattern.test(value)));
+    const basePositive = index === 0 ? locks.positive : locks.positive.slice(0, 12);
+    const mergedPositive = [...basePositive, ...arabicPositive, ...safeGeneratedPositive]
+      .filter((value, i, all) => all.indexOf(value) === i)
+      .slice(0, 50);
+    const mergedNegative = [...locks.negative, ...arabicNegative, ...safeGeneratedNegative]
+      .filter((value, i, all) => all.indexOf(value) === i)
+      .slice(0, 50);
+    const next: any = {
+      ...chunk,
+      positive_styles: mergedPositive,
+      negative_styles: mergedNegative,
+      context_adherence: "high",
+    };
+    if (lines.length) {
+      const total = plan.chunks.length;
+      const start = Math.floor(lines.length * index / total);
+      const end = index === total - 1 ? lines.length : Math.max(start + 1, Math.floor(lines.length * (index + 1) / total));
+      const section = typeof chunk.text === "string"
+        ? (chunk.text.match(/^\\s*(\\[[^\\]]+\\])/)?.[1] || `[Section ${index + 1}]`)
+        : `[Section ${index + 1}]`;
+      next.text = `${section}\\n${lines.slice(start, end).join("\\n")}`;
+    }
+    return next;
+  });
+  return { chunks };
+}
 
-replace(`  const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? enforceElevenPlan(planData, body) : null;`,
-`  const compositionPlan = planResponse.ok && Array.isArray(planData?.chunks) ? normalizeElevenCompositionPlan(enforceElevenPlan(planData, body)) : null;`, "compose plan");
+async function elevenCompose`
+);
 
-writeFileSync(file, s);
-console.log("SALVIAN: Eleven Music 2.5 style/vocal/Arabic locks patched before build");
+writeFileSync(file, source);
+console.log("SALVIAN: Music 2.5 build hardening applied (idempotent, plan-safe, hard style lock)");
