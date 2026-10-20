@@ -12,15 +12,20 @@ export default function MusicUploadBridge() {
       const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
       const body = init?.body;
 
-      // Stage-1 Audio Referensi is STORAGE FIRST. This is the verified Mureka
-      // path and is also used by Music v2.5 so the browser never pushes a
-      // large audio file through a Vercel Function request body.
+      // All Stage-1 reference/remix uploads use storage first. The browser
+      // never pushes a large audio file through a Vercel Function request body.
+      // This keeps the proven Mureka/Eleven flow and now applies the same
+      // handoff to Suno reference and voice uploads.
       if (url === "/api/music/upload" && body instanceof FormData) {
         const purpose = String(body.get("purpose") || "reference").toLowerCase();
         const engine = String(body.get("engine") || "mureka").toLowerCase();
         const file = body.get("file");
 
-        if ((purpose === "reference" || purpose === "remix") && (engine === "mureka" || engine === "eleven_music_v2_5") && file instanceof File) {
+        if (
+          (purpose === "reference" || purpose === "remix" || purpose === "voice") &&
+          (engine === "mureka" || engine === "eleven_music_v2_5" || engine === "suno_v6") &&
+          file instanceof File
+        ) {
           try {
             const blob = await upload(`salvian-music/${crypto.randomUUID()}-${file.name}`, file, {
               access: "public",
@@ -31,11 +36,22 @@ export default function MusicUploadBridge() {
             const handoff = new FormData();
             handoff.append("file_url", blob.url);
             handoff.append("file_name", file.name);
-            // Normalize both legacy "remix" uploads and the current
-            // reference upload into the same storage-first Stage-1 path.
-            handoff.append("purpose", "reference");
+            handoff.append("purpose", purpose);
             handoff.append("engine", engine);
 
+            // Suno gets its own server-side handoff because its provider API
+            // requires the API key to stay server-side. Mureka and Eleven keep
+            // using the existing verified /api/music/upload route.
+            if (engine === "suno_v6") {
+              return originalFetch("/api/music/suno-upload", {
+                ...init,
+                body: handoff,
+              });
+            }
+
+            // Normalize legacy "remix" uploads and current references into the
+            // same storage-first Stage-1 path used by the verified flow.
+            if (purpose !== "voice") handoff.set("purpose", "reference");
             return originalFetch("/api/music/upload", {
               ...init,
               body: handoff,
