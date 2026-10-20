@@ -38,5 +38,13 @@ const occurrences = source.split(oldBlock).length - 1;
 if (occurrences !== 1) throw new Error(`Expected exactly one Suno custom payload anchor, found ${occurrences}.`);
 source = source.replace(oldBlock, newBlock);
 
+// Suno's current query contract expects song_ids as a comma-separated string.
+// Normalize the status payload at build time so the runtime route can never send [taskId].
+const oldStatusBlock = 'body: JSON.stringify({ song_ids: [taskId], model: "suno-v6" })';
+const newStatusBlock = 'body: JSON.stringify({ song_ids: taskId, model: "suno-v6" })';
+const statusOccurrences = source.split(oldStatusBlock).length - 1;
+if (statusOccurrences !== 1) throw new Error(`Expected exactly one Suno status payload anchor, found ${statusOccurrences}.`);
+source = source.replace(oldStatusBlock, newStatusBlock);
+
 fs.writeFileSync(file, source, "utf8");
-console.log("Suno quality/style guard applied: user style preserved, genre-specific locks expanded, vocal cengkok/rounded-tone locks added, style_tags <= 1000, lyrics <= 3000, negative_tags <= 1000.");
+console.log("Suno quality/style/status guard applied: user style preserved, genre-specific locks expanded, vocal cengkok/rounded-tone locks added, style_tags <= 1000, lyrics <= 3000, negative_tags <= 1000, and song query IDs normalized to the current API contract.");
