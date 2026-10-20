@@ -53,6 +53,14 @@ const sourcePromptOccurrences = source.split(oldSourcePrompt).length - 1;
 if (sourcePromptOccurrences !== 1) throw new Error(`Expected exactly one Suno source prompt anchor, found ${sourcePromptOccurrences}.`);
 source = source.replace(oldSourcePrompt, newSourcePrompt);
 
+// Provider limit guard: every Layer 2 style_tags field must be <= 1000 characters.
+// This catches reference/voice branches as well as the main custom-generation branch.
+const beforeStyleTagGuard = source;
+source = source.replace(/style_tags:\s*premiumDirective(?:\.slice\(0,\s*1000\))?/g, 'style_tags: premiumDirective.slice(0, 1000)');
+if (source !== beforeStyleTagGuard) {
+  console.log("Applied global Suno style_tags <= 1000 guard.");
+}
+
 // Suno's current query contract expects song_ids as a comma-separated string.
 // Normalize the status payload at build time so the runtime route can never send [taskId].
 const oldStatusBlock = 'body: JSON.stringify({ song_ids: [taskId], model: "suno-v6" })';
