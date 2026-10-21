@@ -78,9 +78,7 @@ export default function AiAssistant() {
 
   const toggleSave = (message: Message) => {
     setSavedIds(previous => {
-      const next = previous.includes(message.id)
-        ? previous.filter(id => id !== message.id)
-        : [...previous, message.id];
+      const next = previous.includes(message.id) ? previous.filter(id => id !== message.id) : [...previous, message.id];
       try { window.localStorage.setItem(SAVED_KEY, JSON.stringify(next)); } catch {}
       return next;
     });
@@ -137,17 +135,19 @@ export default function AiAssistant() {
               {messages.map((item) => <div key={item.id} className={item.role === "user" ? "flex justify-end" : "flex justify-start"}>
                 <div className={item.role === "user" ? "w-full max-w-4xl rounded-3xl bg-violet-500/15 px-5 py-4 text-sm leading-7 text-violet-900" : "w-full max-w-4xl rounded-3xl border border-white/10 bg-[#111119] px-5 py-4 text-sm leading-7 text-zinc-200 shadow-xl shadow-black/10"}>
                   <div className="whitespace-pre-wrap break-words">{item.content}</div>
-                  {item.role === "assistant" && <div className="mt-4 flex flex-wrap gap-2 border-t border-white/8 pt-3">
-                    <button type="button" onClick={() => copyReply(item.content, item.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">
-                      {copiedId === item.id ? <Check size={14}/> : <Copy size={14}/>} {copiedId === item.id ? "Tersalin" : "Salin"}
-                    </button>
-                    <button type="button" onClick={() => toggleSave(item)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">
-                      <Save size={14}/> {savedIds.includes(item.id) ? "Tersimpan" : "Simpan"}
-                    </button>
-                    <button type="button" onClick={() => deleteMessage(item.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-red-400/15 bg-red-500/5 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10">
+                  <div className="mt-4 flex flex-wrap gap-2 border-t border-black/5 pt-3">
+                    {item.role === "assistant" && <>
+                      <button type="button" onClick={() => copyReply(item.content, item.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">
+                        {copiedId === item.id ? <Check size={14}/> : <Copy size={14}/>} {copiedId === item.id ? "Tersalin" : "Salin"}
+                      </button>
+                      <button type="button" onClick={() => toggleSave(item)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">
+                        <Save size={14}/> {savedIds.includes(item.id) ? "Tersimpan" : "Simpan"}
+                      </button>
+                    </>}
+                    {item.id !== "welcome" && <button type="button" onClick={() => deleteMessage(item.id)} disabled={busy} className="inline-flex items-center gap-1.5 rounded-xl border border-red-400/15 bg-red-500/5 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40">
                       <Trash2 size={14}/> Hapus
-                    </button>
-                  </div>}
+                    </button>}
+                  </div>
                 </div>
               </div>)}
               {busy && <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-zinc-500">Asisten sedang menulis…</div>}
@@ -158,7 +158,7 @@ export default function AiAssistant() {
             <form onSubmit={ask} className="flex w-full flex-col gap-3">
               <div className="flex items-center justify-between"><div className="text-sm font-bold text-zinc-200">Tulis bebas</div><div className="text-[11px] text-zinc-600">{input.length}/2000</div></div>
               <textarea value={input} onChange={event => setInput(event.target.value)} maxLength={2000} rows={5} autoFocus placeholder="Ketik lirik lagu, ide musik, genre, prompt, atau apa saja…" className="min-h-[120px] w-full resize-y rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-zinc-600 focus:border-violet-400/40"/>
-              <button type="submit" disabled={busy || !input.trim()} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 text-sm font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-40 hover:bg-violet-500">
+              <button type="submit" disabled={busy || !input.trim()} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-40 hover:bg-violet-500">
                 <Send size={18}/> Kirim ke Asisten AI
               </button>
               <p className="px-1 text-[11px] leading-5 text-zinc-600">Gunakan ruang ini sebebas mungkin untuk lirik, konsep lagu, revisi, struktur, atau pertanyaan musik. Jangan kirim password, API key, token, atau data rahasia.</p>
