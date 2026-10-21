@@ -14,9 +14,10 @@ Asisten ini hanya untuk teks. Jangan menghasilkan audio, jangan menjalankan pros
 
 // CHAT ONLY. Never touch the music-generation routes.
 const CREATOR_ASSISTANT_URL = "https://creator.sovira.id/api/assistant";
-// Every direct fallback below is a Google Gemini model with a documented Free Tier.
-// No paid-only model is ever selected.
+// Gemini models below all have a Gemini API Free Tier. No paid model/provider is used.
+// Newer Free models are tried before legacy 2.5 models whose access can be restricted.
 const FREE_MODELS = [
+  "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
   "gemini-2.5-flash-lite",
   "gemini-2.5-flash",
@@ -79,37 +80,58 @@ function shouldUseFreeFallback(status: number, data: any) {
     raw.includes("model") && (raw.includes("not available") || raw.includes("tidak tersedia") || raw.includes("unavailable"));
 }
 
+function shouldTryNextFreeModel(status: number, data: any) {
+  const raw = JSON.stringify(data ?? {}).toLowerCase();
+  if ([429, 500, 502, 503, 504].includes(status)) return true;
+  if ([400, 403, 404].includes(status)) {
+    return raw.includes("model") || raw.includes("not found") || raw.includes("not supported") ||
+      raw.includes("permission") || raw.includes("access") || raw.includes("unavailable");
+  }
+  return false;
+}
+
 async function callDirectGeminiFree(message: string, history: ChatMessage[]) {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) return { ok: false as const, status: 503, error: "Gemini Gratis belum dikonfigurasi pada Music." };
 
-  const contents = history.map((item) => ({
-    role: item.role === "assistant" ? "model" : "user",
-    parts: [{ text: item.content }],
-  }));
+  // The current user message MUST be part of the Gemini contents. The previous
+  // implementation sent only history, so the direct Free fallback could not answer
+  // a new chat message even when the Gemini key and model were available.
+  const contents = [
+    ...history.map((item) => ({
+      role: item.role === "assistant" ? "model" : "user",
+      parts: [{ text: item.content }],
+    })),
+    { role: "user", parts: [{ text: message }] },
+  ];
 
   let lastStatus = 503;
   let lastError = "Gemini Gratis tidak tersedia sementara.";
 
   for (const model of FREE_MODELS) {
-    const { response, data } = await postJson(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-      {
-        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents,
-        generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
-      },
-      { "x-goog-api-key": apiKey },
-    );
+    try {
+      const { response, data } = await postJson(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents,
+          generationConfig: { maxOutputTokens: 1200 },
+        },
+        { "x-goog-api-key": apiKey },
+      );
 
-    const answer = extractAnswer(data);
-    if (response.ok && answer) return { ok: true as const, answer, model };
+      const answer = extractAnswer(data);
+      if (response.ok && answer) return { ok: true as const, answer, model };
 
-    lastStatus = response.status;
-    lastError = String(data?.error?.message || data?.error || lastError).slice(0, 240);
-    // Only Free models are in this list. Try the next Free model on transient
-    // availability/quota errors; never switch to a paid model/provider.
-    if (![429, 500, 502, 503, 504].includes(response.status)) break;
+      lastStatus = response.status;
+      lastError = String(data?.error?.message || data?.error || lastError).slice(0, 240);
+      if (!shouldTryNextFreeModel(response.status, data)) break;
+    } catch (error: any) {
+      lastStatus = error?.name === "AbortError" ? 504 : 503;
+      lastError = error?.name === "AbortError" ? "Asisten AI terlalu lama merespons." : lastError;
+      // A transport/timeout problem on one Free model must not stop the next Free model.
+      continue;
+    }
   }
 
   return { ok: false as const, status: lastStatus, error: lastError };
@@ -148,17 +170,20 @@ export async function POST(request: Request) {
         if (fallback.ok) {
           return NextResponse.json({ answer: fallback.answer, free: true, source: "gemini-free-fallback", model: fallback.model });
         }
-        return NextResponse.json({ error: "Batas atau kapasitas Gemini Gratis sedang tercapai. Coba lagi sebentar." }, { status: 429 });
+        // Do not impose an application-side quota/limit message. If every Free
+        // upstream is unavailable, report availability without pretending the app
+        // itself has a daily/session/message cap.
+        return NextResponse.json({ error: "Asisten AI Gratis sedang tidak dapat merespons. Coba kirim lagi." }, { status: 503 });
       }
 
-      return NextResponse.json({ error: "Gemini Gratis pada Asisten AI sedang tidak tersedia sementara. Coba lagi sebentar." }, { status: 503 });
+      return NextResponse.json({ error: "Gemini Gratis pada Asisten AI sedang tidak tersedia sementara. Coba kirim lagi." }, { status: 503 });
     } catch (error: any) {
       // Creator transport failure must never cause a paid fallback. Try Gemini Free only.
       const fallback = await callDirectGeminiFree(message, safeHistory).catch(() => null);
       if (fallback?.ok) {
         return NextResponse.json({ answer: fallback.answer, free: true, source: "gemini-free-fallback", model: fallback.model });
       }
-      return NextResponse.json({ error: error?.name === "AbortError" ? "Asisten AI terlalu lama merespons. Coba lagi." : "Gemini Gratis pada Asisten AI sedang tidak tersedia sementara. Coba lagi sebentar." }, { status: 503 });
+      return NextResponse.json({ error: error?.name === "AbortError" ? "Asisten AI terlalu lama merespons. Coba lagi." : "Gemini Gratis pada Asisten AI sedang tidak tersedia sementara. Coba kirim lagi." }, { status: 503 });
     }
   } catch (error: any) {
     console.error("SALVIAN AI MUSIC assistant error", { name: error?.name, message: error?.message });
