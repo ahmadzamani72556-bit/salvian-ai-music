@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { refundAssistantDailyRequest, reserveAssistantDailyRequest, ASSISTANT_DAILY_LIMIT } from "../../../lib/assistant-daily-limit";
+import { refundAssistantDailyRequest, reserveAssistantDailyRequest, ASSISTANT_DAILY_LIMIT } from "../../../lib/assistant-daily-limit-v2";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
