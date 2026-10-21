@@ -7,6 +7,8 @@ on:
 permissions:
   contents: write
 
+# Trigger the contrast patch against the current assistant component.
+
 jobs:
   patch:
     if: contains(github.event.head_commit.message, 'Apply final assistant user contrast fix')
