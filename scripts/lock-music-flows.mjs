@@ -32,7 +32,7 @@ const LOCKED = {
   "app/api/music/instrumental/route.ts": "d8e4aabf2f76d3f5a76b3ebad616273602d66ef3",
 
   // Persisted project/task state used by the working result flow.
-  "lib/server-music-projects.ts": "24da73360814e3e85704109a2aded4cd4ca7006b",
+  "lib/server-music-projects.ts": "8534334ca11c701765d90e5d88d8c83ad007a58a",
 
   // Layer 1/2 UI and the upload bridge. Keep the working screens unchanged.
   "components/music-generation-shell.tsx": "5cac6848e5ef794c02c478a8bdac085180dbe6cd",
