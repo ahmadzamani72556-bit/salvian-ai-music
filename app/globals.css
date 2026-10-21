@@ -2,22 +2,63 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
+:root { color-scheme: light; }
 html,
-body { margin: 0; min-height: 100%; background: #07070b; color: #f7f7fb; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-body { background: radial-gradient(circle at 50% -10%, rgba(124, 58, 237, 0.18), transparent 35%), #07070b; overflow-x: hidden; }
+body { margin: 0; min-height: 100%; background: #ffffff; color: #171717; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { background: #ffffff; overflow-x: hidden; }
 * { box-sizing: border-box; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #292936; border-radius: 999px; }
-.card { background: rgba(18, 18, 25, 0.82); border: 1px solid #292934; border-radius: 22px; box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22); }
-.glass { background: rgba(11, 11, 16, 0.76); backdrop-filter: blur(18px); border: 1px solid rgba(255, 255, 255, 0.08); }
-.gradient-text { background: linear-gradient(90deg, #fff, #c4b5fd, #f0abfc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 999px; }
+.card { background: #ffffff; border: 1px solid #e4e4e7; border-radius: 22px; box-shadow: 0 18px 60px rgba(15, 23, 42, 0.08); }
+.glass { background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(18px); border: 1px solid #e4e4e7; }
+.gradient-text { background: linear-gradient(90deg, #111827, #7c3aed, #a21caf); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
-[data-premium-studio] img[src="/salvian-ai-logo.svg"] { display: none !important; }
-
-/* Lirik editor: terang, besar, bersih dan mudah dibaca. */
+/* SALVIAN AI MUSIC — clean light workspace. */
+[data-premium-studio] { background: #ffffff !important; color: #171717 !important; }
+[data-premium-studio] .bg-black,
+[data-premium-studio] .bg-zinc-950,
+[data-premium-studio] .bg-neutral-950,
+[data-premium-studio] .bg-gray-950 { background-color: #ffffff !important; }
+[data-premium-studio] .bg-zinc-900,
+[data-premium-studio] .bg-neutral-900,
+[data-premium-studio] .bg-gray-900,
+[data-premium-studio] .bg-slate-900 { background-color: #fafafa !important; }
+[data-premium-studio] .bg-zinc-800,
+[data-premium-studio] .bg-neutral-800,
+[data-premium-studio] .bg-gray-800,
+[data-premium-studio] .bg-slate-800 { background-color: #f4f4f5 !important; }
+[data-premium-studio] .bg-white\/5,
+[data-premium-studio] .bg-white\/10 { background-color: #f8f8fa !important; }
+[data-premium-studio] .border-white\/5,
+[data-premium-studio] .border-white\/10,
+[data-premium-studio] .border-zinc-800,
+[data-premium-studio] .border-zinc-700,
+[data-premium-studio] .border-neutral-800,
+[data-premium-studio] .border-neutral-700 { border-color: #e4e4e7 !important; }
+[data-premium-studio] .text-white { color: #18181b !important; }
+[data-premium-studio] .text-zinc-100,
+[data-premium-studio] .text-zinc-200,
+[data-premium-studio] .text-neutral-100,
+[data-premium-studio] .text-neutral-200,
+[data-premium-studio] .text-gray-100,
+[data-premium-studio] .text-gray-200 { color: #27272a !important; }
+[data-premium-studio] .text-zinc-300,
+[data-premium-studio] .text-zinc-400,
+[data-premium-studio] .text-neutral-300,
+[data-premium-studio] .text-neutral-400,
+[data-premium-studio] .text-gray-300,
+[data-premium-studio] .text-gray-400 { color: #52525b !important; }
+[data-premium-studio] .text-zinc-500,
+[data-premium-studio] .text-neutral-500,
+[data-premium-studio] .text-gray-500 { color: #71717a !important; }
+[data-premium-studio] .placeholder-zinc-500::placeholder,
+[data-premium-studio] .placeholder-zinc-400::placeholder,
+[data-premium-studio] .placeholder-neutral-500::placeholder { color: #a1a1aa !important; }
+[data-premium-studio] input,
+[data-premium-studio] textarea,
+[data-premium-studio] select { background-color: #ffffff !important; color: #18181b !important; border-color: #d4d4d8 !important; }
 [data-premium-studio] textarea.font-mono {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
   font-size: 16px !important;
@@ -26,46 +67,38 @@ button { cursor: pointer; }
   font-variant-ligatures: normal !important;
 }
 [data-premium-studio] textarea[placeholder*="[Verse]"] {
-  color: #ffffff !important;
-  caret-color: #c4b5fd !important;
+  color: #18181b !important;
+  caret-color: #7c3aed !important;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
   font-size: 17px !important;
   font-weight: 500 !important;
   line-height: 1.9 !important;
   letter-spacing: 0.005em !important;
-  text-shadow: 0 0 12px rgba(255,255,255,.06);
+  text-shadow: none;
 }
-[data-premium-studio] textarea[placeholder*="[Verse]"]::placeholder { color: #9a9aa5 !important; opacity: 1 !important; }
-
-/* Lirik hasil lagu: tidak lagi abu-abu kecil atau terpotong tiga baris. */
+[data-premium-studio] textarea[placeholder*="[Verse]"]::placeholder { color: #a1a1aa !important; opacity: 1 !important; }
 [data-premium-studio] article p.whitespace-pre-wrap.line-clamp-3 {
-  color: #f7f7fb !important;
+  color: #27272a !important;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
   font-size: 16px !important;
   font-weight: 500 !important;
   line-height: 1.9 !important;
   letter-spacing: 0.01em !important;
-  text-shadow: 0 0 14px rgba(255,255,255,.08);
+  text-shadow: none;
   display: block !important;
   -webkit-line-clamp: unset !important;
   -webkit-box-orient: initial !important;
   max-height: 15rem !important;
   overflow-y: auto !important;
   padding: 1rem 1.05rem !important;
-  border: 1px solid rgba(255,255,255,.09) !important;
+  border: 1px solid #e4e4e7 !important;
   border-radius: 1rem !important;
-  background: rgba(255,255,255,.035) !important;
+  background: #fafafa !important;
 }
-[data-premium-studio] .space-y-3 > div > p.line-clamp-2 {
-  color: #e4e4e7 !important;
-  font-size: 14px !important;
-  line-height: 1.75 !important;
-  font-weight: 450 !important;
-}
-
-/* AI Assistant. */
+[data-premium-studio] .space-y-3 > div > p.line-clamp-2 { color: #52525b !important; font-size: 14px !important; line-height: 1.75 !important; font-weight: 450 !important; }
 [data-premium-studio] .fixed.bottom-4.right-4 .max-h-72 > div { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; font-size: 16px !important; line-height: 1.65 !important; letter-spacing: normal !important; }
 [data-premium-studio] .fixed.bottom-4.right-4 form input { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; font-size: 16px !important; line-height: 1.5 !important; }
+[data-premium-studio] img[src="/salvian-ai-logo.svg"] { display: none !important; }
 
 @media (max-width: 1023px) {
   html, body { overflow-x: hidden !important; overflow-y: auto !important; height: auto !important; min-height: 100% !important; }
@@ -79,8 +112,8 @@ button { cursor: pointer; }
   [data-premium-studio] section.grid > div:first-child > div:first-child > button > span:nth-child(2) { min-width: 0 !important; max-width: 100% !important; flex: 1 1 0% !important; overflow: hidden !important; }
   [data-premium-studio] section.grid > div:first-child > div:first-child > button > span:nth-child(2) > span { min-width: 0 !important; max-width: 100% !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
   [data-premium-studio] h1, [data-premium-studio] h2, [data-premium-studio] h3, [data-premium-studio] p, [data-premium-studio] span { overflow-wrap: anywhere; }
-  nav[aria-label="Navigasi Studio Musik"] { position: fixed !important; left: 0 !important; right: 0 !important; bottom: 0 !important; top: auto !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; transform: none !important; }
+  nav[aria-label="Navigasi Studio Musik"] { position: fixed !important; left: 0 !important; right: 0 !important; bottom: 0 !important; top: auto !important; width: 100% !important; max-width: 100vw !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; transform: none !important; background: #ffffff !important; border-top: 1px solid #e4e4e7 !important; }
   nav[aria-label="Navigasi Studio Musik"] > div { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; width: 100% !important; max-width: 100% !important; min-width: 0 !important; margin: 0 !important; padding: 8px 2px !important; gap: 0 !important; overflow: hidden !important; box-sizing: border-box !important; }
-  nav[aria-label="Navigasi Studio Musik"] > div > button { display: flex !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; flex: none !important; margin: 0 !important; padding: 8px 1px !important; white-space: normal !important; text-align: center !important; align-items: center !important; justify-content: center !important; overflow: hidden !important; box-sizing: border-box !important; }
+  nav[aria-label="Navigasi Studio Musik"] > div > button { display: flex !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; flex: none !important; margin: 0 !important; padding: 8px 1px !important; white-space: normal !important; text-align: center !important; align-items: center !important; justify-content: center !important; overflow: hidden !important; box-sizing: border-box !important; color: #52525b !important; }
   nav[aria-label="Navigasi Studio Musik"] > div > button > span { display: block !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; overflow: hidden !important; overflow-wrap: anywhere !important; word-break: break-word !important; line-height: 1.1 !important; text-align: center !important; }
 }
