@@ -12,9 +12,9 @@ Anda boleh membantu membuat lirik original dari tema yang diberikan pengguna. Ja
 SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, atau billing sendiri di dalam Asisten. Jangan meminta pengguna login, jangan meminta password, API key, token, atau data rahasia. Jangan mengklaim telah melakukan tindakan yang sebenarnya tidak dilakukan.
 Asisten ini hanya untuk teks. Jangan menghasilkan audio, jangan menjalankan proses pembuatan musik, dan jangan mengklaim telah membuat file musik. Jika pengguna ingin membuat audio, arahkan mereka untuk meneruskan hasil teks ke Studio Musik.`;
 
-// Halaman chat Asisten Gratis: Gemini gratis saja.
-// Tidak mengubah atau memanggil alur pembuatan lagu.
-const GEMINI_MODELS = ["gemini-2.5-flash-lite", "gemini-3.1-flash-lite"] as const;
+// Hanya untuk halaman chat Asisten Gratis. Tidak menyentuh alur lagu/Studio.
+// Gunakan model Gemini yang saat ini tersedia untuk Free Tier terlebih dahulu.
+const GEMINI_MODELS = ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite"] as const;
 const MAX_HISTORY_MESSAGES = 4;
 const MAX_HISTORY_CHARS = 1600;
 const MAX_MESSAGE_CHARS = 6000;
@@ -47,7 +47,7 @@ function classifyGeminiError(status: number, data: any) {
   const providerStatus = String(data?.error?.status || "").toUpperCase();
   const message = String(data?.error?.message || "");
   if (status === 400) return "Permintaan Asisten AI tidak valid.";
-  if (status === 401 || status === 403) return "Kunci Gemini Gratis untuk Asisten AI tidak valid atau tidak memiliki akses.";
+  if (status === 401 || status === 403) return "Kunci Gemini Gratis untuk Asisten AI tidak valid atau model Gratis tidak memiliki akses pada project ini.";
   if (status === 404) return "Model Gemini Gratis untuk Asisten AI tidak tersedia pada project ini.";
   if (status === 429) return "Batas gratis Gemini sedang tercapai. Coba lagi sebentar.";
   if (status === 408 || status === 504) return "Asisten AI terlalu lama merespons. Coba lagi.";
@@ -98,8 +98,8 @@ export async function POST(request: Request) {
     const contents = toGeminiContents(normalizeHistory(history, message));
     let lastResult: { response: Response; data: any } | null = null;
 
-    // Utamakan Gemini 2.5 Flash-Lite, sesuai jalur gratis sebelumnya.
-    // Jika project mengembalikan 404 untuk model lama, gunakan model Gemini Gratis berikutnya.
+    // 3.1 Flash-Lite adalah jalur Gratis utama saat ini.
+    // 2.5 Flash-Lite dipertahankan hanya sebagai fallback kompatibilitas.
     for (const model of GEMINI_MODELS) {
       const result = await callGemini(apiKey, model, contents);
       lastResult = result;
@@ -120,6 +120,7 @@ export async function POST(request: Request) {
     console.error("SALVIAN MUSIC assistant Gemini error", {
       status: lastResult.response.status,
       providerStatus: lastResult.data?.error?.status || undefined,
+      providerMessage: lastResult.data?.error?.message || undefined,
     });
     return NextResponse.json(
       { error: classifyGeminiError(lastResult.response.status, lastResult.data) },
