@@ -6,7 +6,7 @@ type BillingAction = "consume" | "refund";
 type BillingRecord = { referenceId: string; engine: string };
 
 const BILLING_REF_PREFIX = "salvian_music_billing_ref:";
-const GENERATION_PATHS = new Set(["/api/music", "/api/music/remix"]);
+const GENERATION_PATHS = new Set(["/api/music", "/api/music/remix", "/api/music/instrumental"]);
 
 function getEngine(body: Record<string, unknown>) {
   return String(body.musicEngine || body.engine || "").trim().toLowerCase();
