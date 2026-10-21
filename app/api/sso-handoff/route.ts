@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 
 const ISSUER = "salvian-ai";
 const AUDIENCE = "salvian-apps";
@@ -23,14 +22,14 @@ async function verifySalvianToken(token: string) {
   const header = decodeJson(encodedHeader);
   const payload = decodeJson(encodedPayload);
   if (header.alg !== "HS256" || header.typ !== "JWT") throw new Error("Invalid token algorithm");
-  if (payload.iss !== ISSUER || payload.aud !== AUDIENCE) throw new Error("Invalid token issuer");
+  if (payload.iss !== ISSUER || payload.aud !== AUDIENCE || payload.app !== "music") throw new Error("Invalid token audience");
   if (typeof payload.sub !== "string" || !payload.sub) throw new Error("Missing subject");
 
   const exp = Number(payload.exp || 0);
   if (!exp || Date.now() / 1000 >= exp) throw new Error("Expired token");
 
-  const secretValue = process.env.SALVIAN_SSO_SHARED_SECRET;
-  if (!secretValue || secretValue.length < 32) throw new Error("SSO secret is not configured");
+  const secretValue = process.env.SALVIAN_MUSIC_SSO_SHARED_SECRET;
+  if (!secretValue || secretValue.length < 32) throw new Error("Music SSO secret is not configured");
 
   const key = await crypto.subtle.importKey(
     "raw",
@@ -66,8 +65,7 @@ export async function GET(request: NextRequest) {
   }
 
   const response = NextResponse.redirect(new URL(returnTo.startsWith("/") ? returnTo : "/", request.url), 303);
-  const cookieStore = await cookies();
-  cookieStore.set({
+  response.cookies.set({
     name: COOKIE_NAME,
     value: token,
     httpOnly: true,
