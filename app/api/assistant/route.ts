@@ -12,14 +12,13 @@ Anda boleh membantu membuat lirik original dari tema yang diberikan pengguna. Ja
 SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, atau billing sendiri di dalam Asisten. Jangan meminta pengguna login, jangan meminta password, API key, token, atau data rahasia. Jangan mengklaim telah melakukan tindakan yang sebenarnya tidak dilakukan.
 Asisten ini hanya untuk teks. Jangan menghasilkan audio, jangan menjalankan proses pembuatan musik, dan jangan mengklaim telah membuat file musik. Jika pengguna ingin membuat audio, arahkan mereka untuk meneruskan hasil teks ke Studio Musik.`;
 
-// Hanya memakai model Gemini yang mempunyai Free Tier.
-// Tidak ada model berbayar/fallback berbayar dan tidak ada pemotongan kredit Salvian.
-// Jika satu model sedang penuh, rate-limited, tidak tersedia, atau error server,
-// jalur panggilan langsung pindah ke model Gemini gratis berikutnya.
+// HANYA model Gemini dengan Free Tier.
+// Gemini 3.8 sengaja TIDAK digunakan.
+// Jalur ini memakai key khusus Asisten Gratis dan TIDAK boleh
+// fallback ke GEMINI_API_KEY/GOOGLE_API_KEY milik perusahaan.
 const GEMINI_FREE_MODELS = [
-  "gemini-3.8-flash",
-  "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
+  "gemini-3.5-flash-lite",
   "gemini-2.5-flash-lite",
 ] as const;
 
@@ -70,14 +69,13 @@ function toGeminiContents(history: ChatMessage[]) {
 }
 
 function shouldTryNextModel(status: number) {
-  // Model penuh/tidak tersedia/rate limit/gangguan provider -> failover.
   return status === 404 || status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
 function classifyGeminiError(status: number) {
   if (status === 400) return "Permintaan Asisten AI tidak valid.";
   if (status === 401 || status === 403) {
-    return "Mesin Asisten AI belum memiliki akses Gemini yang valid. Tidak ada billing atau kredit Salvian yang digunakan.";
+    return "Mesin Asisten AI Gratis belum memiliki akses Gemini Free yang valid. Tidak ada billing atau kredit Salvian yang digunakan.";
   }
   if (status === 404 || status === 408 || status === 409 || status === 429 || status >= 500) {
     return "Semua mesin Gemini gratis sedang penuh atau mengalami gangguan sementara. Coba kirim lagi sebentar.";
@@ -144,7 +142,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    // PENTING: hanya key khusus Asisten Gratis.
+    // Jangan pernah fallback ke token perusahaan.
+    const apiKey = process.env.ASSISTANT_GEMINI_FREE_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
         { error: "Mesin Gemini Gratis belum aktif di server." },
@@ -165,7 +165,6 @@ export async function POST(request: Request) {
           model,
           name: error?.name,
         });
-        if (error?.name === "AbortError") continue;
         continue;
       }
 
@@ -181,7 +180,6 @@ export async function POST(request: Request) {
           });
         }
 
-        // Respons kosong juga dianggap kegagalan mesin dan langsung failover.
         continue;
       }
 
