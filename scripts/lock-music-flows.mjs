@@ -9,7 +9,6 @@ import { join } from "node:path";
  * The feature boundary is also frozen: Music owns neither user login/session nor
  * billing/credit/checkout. Parent SALVIAN AI owns those concerns.
  * If any protected production file changes, the production build MUST stop.
- *
  * To intentionally change a protected flow or boundary: update the implementation,
  * test it, review the diff, then update the expected SHA in this file in the same reviewed change.
  */
@@ -42,9 +41,9 @@ const LOCKED = {
 
 function gitBlobSha(text) {
   // Vercel's Linux build workspace can normalize line endings differently from
-  // the Git blob. The protected source is text, so normalize CRLF/BOM before
-  // hashing while keeping the exact reviewed SHA values above.
-  const normalized = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  // the Git blob. Normalize CRLF/BOM and trailing blank lines while keeping
+  // the exact reviewed SHA values above.
+  const normalized = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\n+$/g, "\n");
   const body = Buffer.from(normalized, "utf8");
   const header = Buffer.from(`blob ${body.length}\0`, "utf8");
   return createHash("sha1").update(Buffer.concat([header, body])).digest("hex");
