@@ -81,6 +81,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add components/fullscreen-ai-assistant.tsx .github/workflows/one-time-fix-chat-controls.yml
+          git add components/fullscreen-ai-assistant.tsx
+          git rm .github/workflows/one-time-fix-chat-controls.yml
           git commit -m "Fix chat controls only"
           git push
