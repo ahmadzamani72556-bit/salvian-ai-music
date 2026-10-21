@@ -2,11 +2,14 @@ import { neon } from "@neondatabase/serverless";
 import { createHash } from "node:crypto";
 
 const DAILY_LIMIT = 15;
+const BURST_LIMIT = 8;
+const BURST_WINDOW_SECONDS = 30;
 const COOKIE_NAME = "salvian_sso";
 const ISSUER = "salvian-ai";
 const AUDIENCE = "salvian-apps";
 
 const DATABASE_URL = process.env.DATABASE_URL;
+let schemaReady: Promise<void> | null = null;
 
 function getSql() {
   if (!DATABASE_URL) throw new Error("DATABASE_URL belum tersedia untuk batas harian Asisten AI.");
@@ -71,35 +74,92 @@ async function verifiedAccountId(request: Request) {
   }
 }
 
-function fallbackIdentity(request: Request) {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+function clientIp(request: Request) {
   const realIp = request.headers.get("x-real-ip")?.trim();
-  const userAgent = request.headers.get("user-agent") || "unknown";
-  const source = `${forwarded || realIp || "unknown-ip"}|${userAgent}`;
-  return `ip:${createHash("sha256").update(source).digest("hex")}`;
+  if (realIp) return realIp;
+
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",").pop()?.trim();
+  if (forwarded) return forwarded;
+
+  return "unknown-ip";
+}
+
+function hashKey(prefix: string, value: string) {
+  return `${prefix}:${createHash("sha256").update(value).digest("hex")}`;
 }
 
 async function quotaKey(request: Request) {
   const accountId = await verifiedAccountId(request);
-  if (accountId) return `account:${createHash("sha256").update(accountId).digest("hex")}`;
-  return fallbackIdentity(request);
+  if (accountId) return hashKey("account", accountId);
+  return hashKey("ip", `${clientIp(request)}|${request.headers.get("user-agent") || "unknown"}`);
 }
 
-async function ensureTable() {
+async function ensureTables() {
+  if (!schemaReady) {
+    schemaReady = (async () => {
+      const sql = getSql();
+      await sql`
+        CREATE TABLE IF NOT EXISTS public.salvian_music_assistant_daily_usage (
+          quota_key TEXT NOT NULL,
+          usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
+          used_count INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0 AND used_count <= ${DAILY_LIMIT}),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (quota_key, usage_date)
+        )
+      `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS public.salvian_music_assistant_burst_usage (
+          burst_key TEXT PRIMARY KEY,
+          window_started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          used_count INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0 AND used_count <= ${BURST_LIMIT}),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
+    })().catch((error) => {
+      schemaReady = null;
+      throw error;
+    });
+  }
+
+  await schemaReady;
+}
+
+async function reserveBurst(request: Request) {
   const sql = getSql();
-  await sql`
-    CREATE TABLE IF NOT EXISTS public.salvian_music_assistant_daily_usage (
-      quota_key TEXT NOT NULL,
-      usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
-      used_count INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0 AND used_count <= ${DAILY_LIMIT}),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (quota_key, usage_date)
-    )
+  const key = hashKey("ip", clientIp(request));
+  const rows = await sql`
+    INSERT INTO public.salvian_music_assistant_burst_usage (burst_key, window_started_at, used_count, updated_at)
+    VALUES (${key}, now(), 1, now())
+    ON CONFLICT (burst_key)
+    DO UPDATE SET
+      window_started_at = CASE
+        WHEN public.salvian_music_assistant_burst_usage.window_started_at <= now() - (${BURST_WINDOW_SECONDS} * INTERVAL '1 second') THEN now()
+        ELSE public.salvian_music_assistant_burst_usage.window_started_at
+      END,
+      used_count = CASE
+        WHEN public.salvian_music_assistant_burst_usage.window_started_at <= now() - (${BURST_WINDOW_SECONDS} * INTERVAL '1 second') THEN 1
+        ELSE public.salvian_music_assistant_burst_usage.used_count + 1
+      END,
+      updated_at = now()
+    WHERE public.salvian_music_assistant_burst_usage.window_started_at <= now() - (${BURST_WINDOW_SECONDS} * INTERVAL '1 second')
+       OR public.salvian_music_assistant_burst_usage.used_count < ${BURST_LIMIT}
+    RETURNING used_count
   `;
+
+  if (!rows.length) return { allowed: false, key };
+  return { allowed: true, key };
 }
 
 export async function reserveAssistantDailyRequest(request: Request) {
-  await ensureTable();
+  await ensureTables();
+
+  // Lapisan pertama: cegah burst global per alamat IP, termasuk akun yang berbeda-beda.
+  const burst = await reserveBurst(request);
+  if (!burst.allowed) {
+    return { allowed: false, remaining: 0, key: null as string | null };
+  }
+
+  // Lapisan kedua: hard cap 15 chat/hari per akun SALVIAN AI yang tervalidasi.
   const key = await quotaKey(request);
   const sql = getSql();
   const rows = await sql`
@@ -112,11 +172,6 @@ export async function reserveAssistantDailyRequest(request: Request) {
   `;
 
   if (!rows.length) {
-    const current = await sql`
-      SELECT used_count FROM public.salvian_music_assistant_daily_usage
-      WHERE quota_key = ${key} AND usage_date = CURRENT_DATE
-      LIMIT 1
-    `;
     return { allowed: false, remaining: 0, key };
   }
 
