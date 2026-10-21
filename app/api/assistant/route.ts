@@ -15,7 +15,7 @@ Asisten ini hanya untuk teks. Jangan menghasilkan audio, jangan menjalankan pros
 
 // Jalur gratis khusus Asisten: teks pendek, lirik, ide, dan bantuan Studio.
 // Batas aplikasi ini terpisah dari billing/kredit SALVIAN AI dan tidak memotong kredit.
-const PRIMARY_MODEL = "gemini-3.1-flash-lite";
+const PRIMARY_MODEL = "gemini-2.5-flash-lite";
 const FALLBACK_MODEL = "gemini-2.5-flash-lite";
 const MAX_HISTORY_MESSAGES = 4;
 const MAX_HISTORY_CHARS = 1600;
