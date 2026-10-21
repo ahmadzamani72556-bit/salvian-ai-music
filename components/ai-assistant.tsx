@@ -95,6 +95,15 @@ export default function AiAssistant() {
     });
   };
 
+  const clearConversation = () => {
+    if (busy) return;
+    if (messages.length <= 1) return;
+    if (!window.confirm("Hapus seluruh riwayat percakapan Asisten AI ini?")) return;
+    setMessages([welcome]);
+    setInput("");
+    setCopiedId(null);
+  };
+
   const closeAssistant = () => {
     if (busy) return;
     setOpen(false);
@@ -112,16 +121,21 @@ export default function AiAssistant() {
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Sparkles size={20}/></div>
             <div className="min-w-0"><div className="font-extrabold">Asisten AI</div><div className="truncate text-xs text-zinc-500">SALVIAN AI MUSIC · Ruang kerja penuh</div></div>
           </div>
-          <button type="button" onClick={closeAssistant} aria-label="Kembali ke Studio Musik" className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/10">
-            <X size={18}/> Kembali
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={clearConversation} disabled={busy || messages.length <= 1} aria-label="Hapus seluruh riwayat percakapan" className="inline-flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-500/5 px-3 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-35">
+              <Trash2 size={17}/> <span className="hidden sm:inline">Hapus riwayat</span>
+            </button>
+            <button type="button" onClick={closeAssistant} aria-label="Kembali ke Studio Musik" className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/10">
+              <X size={18}/> <span className="hidden sm:inline">Kembali</span>
+            </button>
+          </div>
         </header>
 
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
           <section className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
             <div className="mx-auto w-full max-w-5xl space-y-4 pb-8">
               {messages.map((item) => <div key={item.id} className={item.role === "user" ? "flex justify-end" : "flex justify-start"}>
-                <div className={item.role === "user" ? "w-full max-w-4xl rounded-3xl bg-violet-500/15 px-5 py-4 text-sm leading-7 text-violet-50" : "w-full max-w-4xl rounded-3xl border border-white/10 bg-[#111119] px-5 py-4 text-sm leading-7 text-zinc-200 shadow-xl shadow-black/10"}>
+                <div className={item.role === "user" ? "w-full max-w-4xl rounded-3xl bg-violet-500/15 px-5 py-4 text-sm leading-7 text-violet-900" : "w-full max-w-4xl rounded-3xl border border-white/10 bg-[#111119] px-5 py-4 text-sm leading-7 text-zinc-200 shadow-xl shadow-black/10"}>
                   <div className="whitespace-pre-wrap break-words">{item.content}</div>
                   {item.role === "assistant" && <div className="mt-4 flex flex-wrap gap-2 border-t border-white/8 pt-3">
                     <button type="button" onClick={() => copyReply(item.content, item.id)} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/10">
@@ -143,7 +157,7 @@ export default function AiAssistant() {
           <aside className="flex shrink-0 border-t border-white/10 bg-[#0c0c13] p-3 sm:p-4 lg:w-[420px] lg:border-l lg:border-t-0 lg:p-6">
             <form onSubmit={ask} className="flex w-full flex-col gap-3">
               <div className="flex items-center justify-between"><div className="text-sm font-bold text-zinc-200">Tulis bebas</div><div className="text-[11px] text-zinc-600">{input.length}/2000</div></div>
-              <textarea value={input} onChange={event => setInput(event.target.value)} maxLength={2000} rows={5} autoFocus placeholder="Ketik lirik lagu, ide musik, genre, prompt, atau apa saja…" className="min-h-[120px] w-full resize-y rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-zinc-600 focus:border-violet-400/40 lg:min-h-[220px]"/>
+              <textarea value={input} onChange={event => setInput(event.target.value)} maxLength={2000} rows={5} autoFocus placeholder="Ketik lirik lagu, ide musik, genre, prompt, atau apa saja…" className="min-h-[120px] w-full resize-y rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-zinc-600 focus:border-violet-400/40"/>
               <button type="submit" disabled={busy || !input.trim()} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 text-sm font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-40 hover:bg-violet-500">
                 <Send size={18}/> Kirim ke Asisten AI
               </button>
