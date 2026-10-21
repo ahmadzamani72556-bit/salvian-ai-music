@@ -1,0 +1,48 @@
+name: Fix Music Assistant user message contrast
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: contains(github.event.head_commit.message, 'Fix Music Assistant user message contrast')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Darken user message text on light bubble
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('components/fullscreen-ai-assistant.tsx')
+          text = path.read_text()
+          marker = 'message.role === "user"'
+          start = text.find(marker)
+          if start < 0:
+              raise SystemExit('User message render block not found')
+          end = text.find('message.role === "assistant"', start + len(marker))
+          if end < 0:
+              end = min(len(text), start + 5000)
+          block = text[start:end]
+          replacements = {
+              'text-violet-200': 'text-violet-950',
+              'text-white/70': 'text-violet-950',
+              'text-white/80': 'text-violet-950',
+              'text-zinc-200': 'text-zinc-950',
+          }
+          changed = block
+          for old, new in replacements.items():
+              changed = changed.replace(old, new)
+          if changed == block:
+              raise SystemExit('No pale user text class found in user message block')
+          path.write_text(text[:start] + changed + text[end:])
+      - name: Commit contrast fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+users.noreply.github.com'
+          git add components/fullscreen-ai-assistant.tsx
+          git commit -m 'Improve Music Assistant user message readability'
+          git push
