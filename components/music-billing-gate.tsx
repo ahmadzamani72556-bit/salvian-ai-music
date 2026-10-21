@@ -17,7 +17,7 @@ function isSupportedEngine(engine: string) {
 }
 
 async function centralBill(fetcher: typeof window.fetch, action: BillingAction, engine: string, referenceId: string) {
-  const response = await fetcher("/api/billing", {
+  const response = await fetcher("/api/music/charge", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ action, feature: "MUSIC_GENERATION", musicEngine: engine, referenceId }),
