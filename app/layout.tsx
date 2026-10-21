@@ -97,6 +97,17 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             background: #ffffff !important;
             border-color: #e4e4e7 !important;
           }
+          [data-premium-studio] main > header button {
+            color: #4c1d95 !important;
+            background: #f3e8ff !important;
+            border-color: #c4b5fd !important;
+            opacity: 1 !important;
+            text-shadow: none !important;
+          }
+          [data-premium-studio] main > header button svg {
+            color: #7c3aed !important;
+            opacity: 1 !important;
+          }
         ` }} />
         {children}
         <Script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js" strategy="beforeInteractive" />
