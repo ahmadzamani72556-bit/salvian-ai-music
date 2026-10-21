@@ -35,27 +35,65 @@ export default function AiAssistant() {
     return () => { document.body.style.overflow = previousOverflow; };
   }, [open]);
 
+  const requestAssistant = async (message: string, history: { role: "user" | "assistant"; content: string }[]) => {
+    const res = await fetch("/api/assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history }),
+      cache: "no-store",
+    });
+
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  };
+
   const ask = async (event?: FormEvent) => {
     event?.preventDefault();
     const message = input.trim();
     if (!message || busy) return;
+
     const history = messages.slice(-10).map(({ role, content }) => ({ role, content }));
     const userMessage: Message = { id: crypto.randomUUID(), role: "user", content: message };
     setInput("");
     setMessages(prev => [...prev, userMessage]);
     setBusy(true);
+
     try {
-      const res = await fetch("/api/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Asisten AI sedang tidak tersedia.");
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: "assistant", content: String(data.answer || "Maaf, saya belum dapat menjawab.") }]);
+      let result = await requestAssistant(message, history);
+
+      // Jika gateway/provider sedang sibuk, beri satu kesempatan ulang otomatis.
+      // Tidak ada billing, kredit, atau pemanggilan mesin berbayar pada retry ini.
+      if ([502, 503, 504].includes(result.res.status)) {
+        await new Promise(resolve => window.setTimeout(resolve, 450));
+        result = await requestAssistant(message, history);
+      }
+
+      if (!result.res.ok) {
+        throw new Error(result.data.error || "Mesin Gemini Gratis sedang tidak tersedia. Coba lagi sebentar.");
+      }
+
+      setMessages(prev => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: String(result.data.answer || "Maaf, saya belum dapat menjawab."),
+        },
+      ]);
     } catch (error) {
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: "assistant", content: error instanceof Error ? error.message : "Terjadi kesalahan saat menghubungkan ke Asisten AI." }]);
-    } finally { setBusy(false); }
+      setMessages(prev => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: error instanceof Error
+            ? error.message
+            : "Terjadi kesalahan saat menghubungkan ke mesin Gemini Gratis.",
+        },
+      ]);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const copyReply = async (content: string, id: string) => {
@@ -117,7 +155,7 @@ export default function AiAssistant() {
         <header className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#0c0c13] px-4 py-3 sm:px-6 sm:py-4">
           <div className="flex min-w-0 items-center gap-3">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Sparkles size={20}/></div>
-            <div className="min-w-0"><div className="font-extrabold">Asisten AI</div><div className="truncate text-xs text-zinc-500">SALVIAN AI MUSIC · Ruang kerja penuh</div></div>
+            <div className="min-w-0"><div className="font-extrabold">Asisten AI</div><div className="truncate text-xs text-zinc-500">SALVIAN AI MUSIC · Gemini Gratis</div></div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button type="button" onClick={clearConversation} disabled={busy || messages.length <= 1} aria-label="Hapus seluruh riwayat percakapan" className="inline-flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-500/5 px-3 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-35">
@@ -161,7 +199,7 @@ export default function AiAssistant() {
               <button type="submit" disabled={busy || !input.trim()} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-40 hover:bg-violet-500">
                 <Send size={18}/> Kirim ke Asisten AI
               </button>
-              <p className="px-1 text-[11px] leading-5 text-zinc-600">Gunakan ruang ini sebebas mungkin untuk lirik, konsep lagu, revisi, struktur, atau pertanyaan musik. Jangan kirim password, API key, token, atau data rahasia.</p>
+              <p className="px-1 text-[11px] leading-5 text-zinc-600">Asisten ini memakai jalur Gemini Free dan tidak memotong kredit atau billing Salvian. Jangan kirim password, API key, token, atau data rahasia.</p>
             </form>
           </aside>
         </main>
