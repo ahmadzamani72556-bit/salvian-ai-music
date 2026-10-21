@@ -33,3 +33,4 @@ Never expose API keys in browser code.
 
 SALVIAN AI MUSIC production deployments are tracked from the `main` branch through the connected Vercel project.
 
+Parent SALVIAN AI owns the user session, billing account and credit deduction for Music generation.
