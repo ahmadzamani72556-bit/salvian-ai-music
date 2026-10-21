@@ -9,29 +9,22 @@ permissions:
 
 jobs:
   patch:
-    if: contains(github.event.head_commit.message, 'Fix Music Assistant Gemini engine and quota path')
+    if: contains(github.event.head_commit.message, 'Apply quota DDL fix')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Restore initial Gemini model and remove request-time DDL
+      - name: Remove request-time DDL from existing quota path
         shell: python
         run: |
           from pathlib import Path
-
-          route = Path('app/api/assistant/route.ts')
-          text = route.read_text()
-          text = text.replace('const PRIMARY_MODEL = "gemini-3.1-flash-lite";', 'const PRIMARY_MODEL = "gemini-2.5-flash-lite";')
-          text = text.replace('const FALLBACK_MODEL = "gemini-2.5-flash-lite";', 'const FALLBACK_MODEL = "gemini-2.5-flash-lite";')
-          route.write_text(text)
-
           quota = Path('lib/assistant-daily-limit.ts')
           text = quota.read_text()
           text = text.replace('  await ensureTable();\n  const key = await quotaKey(request);', '  const key = await quotaKey(request);')
           quota.write_text(text)
-      - name: Commit fixes
+      - name: Commit quota fix
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+users.noreply.github.com'
-          git add app/api/assistant/route.ts lib/assistant-daily-limit.ts
-          git commit -m 'Restore initial Gemini model and use existing quota table'
+          git add lib/assistant-daily-limit.ts
+          git commit -m 'Remove runtime DDL from Music Assistant quota'
           git push
