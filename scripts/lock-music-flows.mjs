@@ -28,11 +28,11 @@ const LOCKED = {
   // Shared music upload/result paths.
   "app/api/music/upload/route.ts": "69e7cd70a4ca40910086140e9188f80929a7b8f5",
   "app/api/music/audio/route.ts": "20a3ed4be271946c56424658f1096fc1cc81a6ad",
-  "app/api/music/remix/route.ts": "e73387eecff44cf5139ccb81c766f99e8a028fc5",
+  "app/api/music/remix/route.ts": "e73387eecff44cf5139ccb81c766f99e8a028fc",
   "app/api/music/instrumental/route.ts": "d8e4aabf2f76d3f5a76b3ebad616273602d66ef3",
 
   // Persisted project/task state used by the working result flow.
-  "lib/server-music-projects.ts": "8534334ca11c701765d90e5d88d8c83ad007a58a",
+  "lib/server-music-projects.ts": "24da73360814e3e85704109a2aded4cd4ca7006b",
 
   // Layer 1/2 UI and the upload bridge. Keep the working screens unchanged.
   "components/music-generation-shell.tsx": "5cac6848e5ef794c02c478a8bdac085180dbe6cd",
@@ -46,7 +46,7 @@ const LOCKED = {
 
   // Build-time hardening that made the three providers stable.
   "scripts/fix-suno-custom-payload.mjs": "43a3bf9d6e0fc7fd43e5580ad2f6d49900f4fae1",
-  "scripts/harden-suno-status.mjs": "c8cc32b71c6e4c83d02cfec27ccc8fb182b43abc",
+  "scripts/harden-suno-status.mjs": "c8cc32b71c6e4c83d02cfec27ccc8fb182b43abc5",
   "scripts/enhance-mureka-vocal-quality.mjs": "ca46f9e57434f758112143fb157f4e4d97d580ff",
   "scripts/patch-eleven-music.mjs": "881af4881aa1c232e5a08c40edf57072f679feff",
   "scripts/fix-music-types.mjs": "d740861355fd221a765564fcfef49682c8cd8ae5",
