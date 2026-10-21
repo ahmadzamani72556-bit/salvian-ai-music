@@ -1,0 +1,33 @@
+name: Apply Music Assistant card contrast patch
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: contains(github.event.head_commit.message, 'Assistant card contrast patch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Increase assistant card heading contrast
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('components/fullscreen-ai-assistant.tsx')
+          text = path.read_text()
+          old = 'text-sm font-extrabold uppercase tracking-[0.12em] text-violet-200'
+          new = 'text-base font-extrabold uppercase tracking-[0.12em] text-violet-800'
+          if old not in text:
+              raise SystemExit('Expected assistant card heading style was not found')
+          path.write_text(text.replace(old, new, 1))
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add components/fullscreen-ai-assistant.tsx
+          git commit -m 'Improve Music Assistant card heading readability'
+          git push
