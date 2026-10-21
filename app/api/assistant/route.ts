@@ -25,6 +25,7 @@ const FREE_MODELS = [
 const MAX_HISTORY_MESSAGES = 4;
 const MAX_HISTORY_CHARS = 1600;
 const MAX_MESSAGE_CHARS = 6000;
+const MAX_REQUEST_BYTES = 32 * 1024;
 const REQUEST_TIMEOUT_MS = 12000;
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
@@ -33,7 +34,7 @@ type RawChatMessage = { role?: unknown; content?: unknown };
 
 function normalizeHistory(history: unknown[], message: string): ChatMessage[] {
   const safe: ChatMessage[] = [];
-  for (const item of history) {
+  for (const item of history.slice(0, 20)) {
     if (!item || typeof item !== "object") continue;
     const value = item as RawChatMessage;
     if ((value.role !== "user" && value.role !== "assistant") || typeof value.content !== "string") continue;
@@ -139,6 +140,16 @@ async function callDirectGeminiFree(message: string, history: ChatMessage[]) {
 
 export async function POST(request: Request) {
   try {
+    const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!contentType.startsWith("application/json")) {
+      return NextResponse.json({ error: "Format permintaan tidak didukung." }, { status: 415 });
+    }
+
+    const contentLength = Number(request.headers.get("content-length") ?? "0");
+    if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
+      return NextResponse.json({ error: "Permintaan terlalu besar." }, { status: 413 });
+    }
+
     const body = await request.json().catch(() => ({}));
     const message = typeof body.message === "string" ? body.message.trim() : "";
     const history = Array.isArray(body.history) ? body.history : [];
