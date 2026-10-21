@@ -272,6 +272,24 @@ export default function FullscreenAiAssistant() {
     setShowHistory(false);
   };
 
+  const clearAllConversations = () => {
+    if (busy) return;
+    if (!hasConversation && history.length === 0) return;
+    const confirmed = window.confirm(
+      "Hapus semua percakapan Asisten AI dan seluruh riwayat yang tersimpan di perangkat ini?",
+    );
+    if (!confirmed) return;
+
+    setMessages([welcome]);
+    setHistory([]);
+    setInput("");
+    setShowHistory(false);
+    try {
+      window.localStorage.removeItem(CONVERSATION_KEY);
+      window.localStorage.removeItem(HISTORY_KEY);
+    } catch {}
+  };
+
   const ask = async (event?: FormEvent) => {
     event?.preventDefault();
     const message = input.trim();
@@ -440,6 +458,18 @@ export default function FullscreenAiAssistant() {
               <span className="rounded-full bg-white/10 px-1.5 text-[11px]">
                 {history.length}
               </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={clearAllConversations}
+              disabled={busy || (!hasConversation && history.length === 0)}
+              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-red-400/15 bg-red-500/5 px-3 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-35"
+              aria-label="Hapus semua percakapan"
+              title="Hapus semua percakapan"
+            >
+              <Trash2 size={17} />
+              <span className="hidden sm:inline">Hapus semua</span>
             </button>
 
             <button
