@@ -13,10 +13,14 @@ SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, ata
 Asisten ini hanya untuk teks. Jangan menghasilkan audio, jangan menjalankan proses pembuatan musik, dan jangan mengklaim telah membuat file musik. Jika pengguna ingin membuat audio, arahkan mereka untuk meneruskan hasil teks ke Studio Musik.`;
 
 // Jalur gratis khusus Asisten: teks pendek, lirik, ide, dan bantuan Studio.
-// Gemini Free Tier menyediakan input/output gratis untuk model yang didukung,
-// tetapi tetap memiliki batas penggunaan/rate limit dari project Google.
-const PRIMARY_MODEL = "gemini-3.1-flash-lite";
-const FALLBACK_MODEL = "gemini-2.5-flash-lite";
+// Semua model di bawah dipilih dari model Gemini yang menyediakan Free Tier.
+// Tidak ada jalur billing/kredit aplikasi. Jika satu model penuh/terbatas,
+// request otomatis mencoba mesin Gemini gratis berikutnya.
+const GEMINI_FREE_MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite",
+] as const;
 const MAX_HISTORY_MESSAGES = 4;
 const MAX_HISTORY_CHARS = 1600;
 const MAX_MESSAGE_CHARS = 6000;
@@ -62,12 +66,18 @@ function classifyGeminiError(status: number, data: any) {
   const message = String(data?.error?.message || "");
 
   if (status === 400) return "Permintaan Asisten AI tidak valid.";
-  if (status === 401 || status === 403) return "Kunci Gemini untuk Asisten AI tidak valid atau tidak memiliki akses.";
-  if (status === 404) return "Model Gemini Asisten AI tidak tersedia.";
-  if (status === 429) return "Asisten gratis sedang mencapai batas penggunaan. Coba lagi sebentar.";
+  if (status === 401 || status === 403) return "Kunci Gemini untuk Asisten AI tidak valid atau tidak memiliki akses ke paket gratis.";
+  if (status === 404) return "Mesin Gemini gratis yang diminta tidak tersedia.";
+  if (status === 429) return "Asisten gratis sedang mencapai batas penggunaan sementara. Coba lagi sebentar.";
   if (status === 408 || status === 504) return "Asisten AI terlalu lama merespons. Coba lagi.";
 
   return `Layanan Asisten AI bermasalah (HTTP ${status}${providerStatus ? `, ${providerStatus}` : ""}${message ? `: ${message.slice(0, 160)}` : ""}).`;
+}
+
+function shouldTryNextModel(status: number) {
+  // 404 = model tidak tersedia; 408/429/5xx = kapasitas/rate limit/gangguan sementara.
+  // Untuk 400/401/403 kita berhenti agar konfigurasi yang salah tidak diputar ulang.
+  return status === 404 || status === 408 || status === 429 || status >= 500;
 }
 
 async function callGemini(
@@ -138,45 +148,51 @@ export async function POST(request: Request) {
     }
 
     const contents = toGeminiContents(normalizeHistory(history, message));
+    let lastResult: { response: Response; data: any } | null = null;
 
-    let result = await callGemini(apiKey, PRIMARY_MODEL, contents);
+    for (const model of GEMINI_FREE_MODELS) {
+      const result = await callGemini(apiKey, model, contents);
+      lastResult = result;
 
-    // Jika model utama belum tersedia pada project Google, gunakan model
-    // Flash-Lite cadangan yang juga memiliki Free Tier untuk teks.
-    if (!result.response.ok && result.response.status === 404) {
-      result = await callGemini(apiKey, FALLBACK_MODEL, contents);
-    }
+      if (result.response.ok) {
+        const answer = extractAnswer(result.data);
 
-    if (!result.response.ok) {
-      console.error("SALVIAN MUSIC assistant Gemini error", {
+        if (!answer) {
+          console.error("SALVIAN MUSIC assistant Gemini empty response", { model });
+          continue;
+        }
+
+        return NextResponse.json({ answer });
+      }
+
+      console.warn("SALVIAN MUSIC assistant Gemini model failed", {
+        model,
         status: result.response.status,
         providerStatus: result.data?.error?.status || undefined,
       });
 
+      if (!shouldTryNextModel(result.response.status)) break;
+    }
+
+    if (lastResult) {
       return NextResponse.json(
         {
-          error: classifyGeminiError(result.response.status, result.data),
-          providerCode: result.data?.error?.status || undefined,
+          error: classifyGeminiError(lastResult.response.status, lastResult.data),
+          providerCode: lastResult.data?.error?.status || undefined,
         },
         {
           status:
-            result.response.status >= 400 && result.response.status < 600
-              ? result.response.status
+            lastResult.response.status >= 400 && lastResult.response.status < 600
+              ? lastResult.response.status
               : 502,
         }
       );
     }
 
-    const answer = extractAnswer(result.data);
-
-    if (!answer) {
-      return NextResponse.json(
-        { error: "Asisten AI selesai memproses tetapi tidak menghasilkan jawaban." },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json({ answer });
+    return NextResponse.json(
+      { error: "Tidak ada mesin Gemini gratis yang dapat melayani permintaan saat ini." },
+      { status: 503 }
+    );
   } catch (error: any) {
     console.error("SALVIAN AI MUSIC assistant error", {
       name: error?.name,
