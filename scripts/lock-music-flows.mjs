@@ -1,6 +1,4 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
 /**
  * SALVIAN AI MUSIC FLOW LOCK
@@ -8,12 +6,11 @@ import { join } from "node:path";
  * The verified Suno, Mureka and Music 2.5 flows are intentionally frozen.
  * The feature boundary is also frozen: Music owns neither user login/session nor
  * billing/credit/checkout. Parent SALVIAN AI owns those concerns.
- * If any protected production file changes, the production build MUST stop.
- * To intentionally change a protected flow or boundary: update the implementation,
- * test it, review the diff, then update the expected SHA in this file in the same reviewed change.
+ * If any protected production file changes in the reviewed commit, the production
+ * build MUST stop. The lock reads Git's committed blob SHA directly so Vercel's
+ * working-tree line-ending normalization cannot create false mismatches.
  */
 
-const ROOT = process.cwd();
 const LOCKED = {
   "app/api/music/route.ts": "be8b429bfeef2ced3a93f6181fc33bbcb77828fd",
   "app/api/music/suno-safe-create/route.ts": "cae0169db067a69a1a2bbb8b1d96492f4ebdfc69",
@@ -41,24 +38,13 @@ const LOCKED = {
   "scripts/brand-music-engines.mjs": "105072915e7959239a3589e55db2cd6f961d1720",
 };
 
-function gitBlobSha(text) {
-  // Vercel's Linux build workspace can normalize line endings differently from
-  // the Git blob. Normalize CRLF/BOM and trailing blank lines while keeping
-  // the exact reviewed SHA values above.
-  const normalized = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\n+$/g, "\n");
-  const body = Buffer.from(normalized, "utf8");
-  const header = Buffer.from(`blob ${body.length}\0`, "utf8");
-  return createHash("sha1").update(Buffer.concat([header, body])).digest("hex");
-}
-
 const failures = [];
 for (const [relativePath, expected] of Object.entries(LOCKED)) {
-  const absolutePath = join(ROOT, relativePath);
   let actual;
   try {
-    actual = gitBlobSha(readFileSync(absolutePath, "utf8"));
+    actual = execFileSync("git", ["rev-parse", `HEAD:${relativePath}`], { encoding: "utf8" }).trim();
   } catch (error) {
-    failures.push(`${relativePath}: missing/unreadable (${error.message})`);
+    failures.push(`${relativePath}: committed blob is missing/unreadable (${error.message})`);
     continue;
   }
   if (actual !== expected) {
@@ -68,7 +54,7 @@ for (const [relativePath, expected] of Object.entries(LOCKED)) {
 
 if (failures.length) {
   console.error("\nSALVIAN AI MUSIC FLOW LOCK: BUILD BLOCKED");
-  console.error("A protected working flow or the feature boundary was changed. No production build is allowed until the change is reviewed and the lock is deliberately updated.\n");
+  console.error("A protected working flow or the feature boundary changed in the committed source. No production build is allowed until the change is reviewed and the lock is deliberately updated.\n");
   for (const failure of failures) console.error(`- ${failure}`);
   process.exit(1);
 }
