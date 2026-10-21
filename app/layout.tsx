@@ -61,6 +61,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           div[role="dialog"][aria-label="Asisten AI SALVIAN AI MUSIC"] .text-zinc-300 {
             color: #27272a !important;
           }
+          div[role="dialog"][aria-label="Asisten AI SALVIAN AI MUSIC"] .text-violet-50 {
+            color: #4c1d95 !important;
+            opacity: 1 !important;
+            text-shadow: none !important;
+          }
           div[role="dialog"][aria-label="Asisten AI SALVIAN AI MUSIC"] .text-zinc-500,
           div[role="dialog"][aria-label="Asisten AI SALVIAN AI MUSIC"] .text-zinc-600 {
             color: #71717a !important;
