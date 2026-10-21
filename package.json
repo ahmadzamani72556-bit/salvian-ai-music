@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/lock-music-flows.mjs && node scripts/enforce-music-feature-boundary.mjs && node scripts/fix-music-types.mjs && node scripts/brand-music-engines.mjs && node scripts/enhance-mureka-vocal-quality.mjs && node scripts/fix-suno-custom-payload.mjs && node scripts/harden-suno-status.mjs && next build",
+    "build": "node scripts/enforce-music-feature-boundary.mjs && node scripts/fix-music-types.mjs && node scripts/brand-music-engines.mjs && node scripts/enhance-mureka-vocal-quality.mjs && node scripts/fix-suno-custom-payload.mjs && node scripts/harden-suno-status.mjs && next build",
     "start": "next start"
   },
   "dependencies": {
