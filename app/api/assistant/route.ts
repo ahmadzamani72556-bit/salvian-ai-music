@@ -12,30 +12,19 @@ Anda boleh membantu membuat lirik original dari tema yang diberikan pengguna. Ja
 SALVIAN AI MUSIC tidak memiliki alur login, akun, pembayaran, paket, kredit, atau billing sendiri di dalam Asisten. Jangan meminta pengguna login, jangan meminta password, API key, token, atau data rahasia. Jangan mengklaim telah melakukan tindakan yang sebenarnya tidak dilakukan.
 Asisten ini hanya untuk teks. Jangan menghasilkan audio, jangan menjalankan proses pembuatan musik, dan jangan mengklaim telah membuat file musik. Jika pengguna ingin membuat audio, arahkan mereka untuk meneruskan hasil teks ke Studio Musik.`;
 
-// HANYA model Gemini dengan Free Tier.
-// Gemini 3.8 sengaja TIDAK digunakan.
-// Jalur ini memakai key khusus Asisten Gratis dan TIDAK boleh
-// fallback ke GEMINI_API_KEY/GOOGLE_API_KEY milik perusahaan.
-const GEMINI_FREE_MODELS = [
-  "gemini-3.1-flash-lite",
-  "gemini-3.5-flash-lite",
-  "gemini-2.5-flash-lite",
-] as const;
-
+// Kembali ke alur awal yang stabil: hanya model Flash-Lite gratis.
+// Gemini 3.8 sengaja tidak digunakan.
+// Key Asisten dipisahkan dari token API perusahaan dan tidak terhubung ke billing/kredit Salvian.
+const PRIMARY_MODEL = "gemini-3.1-flash-lite";
+const FALLBACK_MODEL = "gemini-2.5-flash-lite";
 const MAX_HISTORY_MESSAGES = 4;
 const MAX_HISTORY_CHARS = 1600;
 const MAX_MESSAGE_CHARS = 6000;
 const MAX_OUTPUT_TOKENS = 550;
-const REQUEST_TIMEOUT_MS = 7000;
+const REQUEST_TIMEOUT_MS = 9000;
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 type RawChatMessage = { role?: unknown; content?: unknown };
-
-type GeminiResult = {
-  response: Response;
-  data: any;
-  model: string;
-};
 
 function normalizeHistory(history: unknown[], message: string): ChatMessage[] {
   const safe: ChatMessage[] = [];
@@ -68,26 +57,24 @@ function toGeminiContents(history: ChatMessage[]) {
   }));
 }
 
-function shouldTryNextModel(status: number) {
-  return status === 404 || status === 408 || status === 409 || status === 429 || status >= 500;
-}
+function classifyGeminiError(status: number, data: any) {
+  const providerStatus = String(data?.error?.status || "").toUpperCase();
+  const message = String(data?.error?.message || "");
 
-function classifyGeminiError(status: number) {
   if (status === 400) return "Permintaan Asisten AI tidak valid.";
-  if (status === 401 || status === 403) {
-    return "Mesin Asisten AI Gratis belum memiliki akses Gemini Free yang valid. Tidak ada billing atau kredit Salvian yang digunakan.";
-  }
-  if (status === 404 || status === 408 || status === 409 || status === 429 || status >= 500) {
-    return "Semua mesin Gemini gratis sedang penuh atau mengalami gangguan sementara. Coba kirim lagi sebentar.";
-  }
-  return "Asisten AI belum dapat merespons saat ini. Coba lagi sebentar.";
+  if (status === 401 || status === 403) return "Kunci Gemini khusus Asisten AI tidak valid atau tidak memiliki akses Free Tier.";
+  if (status === 404) return "Model Gemini Asisten AI tidak tersedia.";
+  if (status === 429) return "Asisten gratis sedang mencapai batas penggunaan. Coba lagi sebentar.";
+  if (status === 408 || status === 504) return "Asisten AI terlalu lama merespons. Coba lagi.";
+
+  return `Layanan Asisten AI bermasalah (HTTP ${status}${providerStatus ? `, ${providerStatus}` : ""}${message ? `: ${message.slice(0, 160)}` : ""}).`;
 }
 
 async function callGemini(
   apiKey: string,
   model: string,
   contents: ReturnType<typeof toGeminiContents>
-): Promise<GeminiResult> {
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -108,7 +95,7 @@ async function callGemini(
     });
 
     const data = await response.json().catch(() => ({}));
-    return { response, data, model };
+    return { response, data };
   } finally {
     clearTimeout(timer);
   }
@@ -142,75 +129,70 @@ export async function POST(request: Request) {
       );
     }
 
-    // PENTING: hanya key khusus Asisten Gratis.
-    // Jangan pernah fallback ke token perusahaan.
+    // Hanya key khusus Asisten Gratis.
+    // TIDAK fallback ke GEMINI_API_KEY atau GOOGLE_API_KEY perusahaan.
     const apiKey = process.env.ASSISTANT_GEMINI_FREE_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Mesin Gemini Gratis belum aktif di server." },
+        { error: "Asisten AI Gratis belum aktif: kunci Gemini Free khusus Asisten belum tersedia." },
         { status: 503 }
       );
     }
 
     const contents = toGeminiContents(normalizeHistory(history, message));
-    let lastResult: GeminiResult | null = null;
 
-    for (const model of GEMINI_FREE_MODELS) {
-      let result: GeminiResult;
+    let result = await callGemini(apiKey, PRIMARY_MODEL, contents);
 
-      try {
-        result = await callGemini(apiKey, model, contents);
-      } catch (error: any) {
-        console.warn("SALVIAN MUSIC assistant Gemini transport failure", {
-          model,
-          name: error?.name,
-        });
-        continue;
-      }
+    // Jalur cadangan yang tetap gratis jika model utama belum tersedia.
+    if (!result.response.ok && result.response.status === 404) {
+      result = await callGemini(apiKey, FALLBACK_MODEL, contents);
+    }
 
-      lastResult = result;
-
-      if (result.response.ok) {
-        const answer = extractAnswer(result.data);
-
-        if (answer) {
-          return NextResponse.json({
-            answer,
-            engine: "Gemini Free",
-          });
-        }
-
-        continue;
-      }
-
-      console.warn("SALVIAN MUSIC assistant Gemini model failed", {
-        model,
+    if (!result.response.ok) {
+      console.error("SALVIAN MUSIC assistant Gemini error", {
         status: result.response.status,
         providerStatus: result.data?.error?.status || undefined,
       });
 
-      if (!shouldTryNextModel(result.response.status)) break;
+      return NextResponse.json(
+        {
+          error: classifyGeminiError(result.response.status, result.data),
+          providerCode: result.data?.error?.status || undefined,
+        },
+        {
+          status:
+            result.response.status >= 400 && result.response.status < 600
+              ? result.response.status
+              : 502,
+        }
+      );
     }
 
-    const status = lastResult?.response.status ?? 503;
-    return NextResponse.json(
-      {
-        error: classifyGeminiError(status),
-        engine: "Gemini Free",
-      },
-      {
-        status: status >= 400 && status < 600 ? status : 503,
-        headers: { "Cache-Control": "no-store" },
-      }
-    );
+    const answer = extractAnswer(result.data);
+
+    if (!answer) {
+      return NextResponse.json(
+        { error: "Asisten AI selesai memproses tetapi tidak menghasilkan jawaban." },
+        { status: 502 }
+      );
+    }
+
+    return NextResponse.json({ answer, engine: "Gemini Free" });
   } catch (error: any) {
     console.error("SALVIAN AI MUSIC assistant error", {
       name: error?.name,
       message: error?.message,
     });
 
+    if (error?.name === "AbortError") {
+      return NextResponse.json(
+        { error: "Asisten AI terlalu lama merespons. Coba lagi." },
+        { status: 504 }
+      );
+    }
+
     return NextResponse.json(
-      { error: "Terjadi kesalahan saat menghubungkan ke mesin Gemini Gratis." },
+      { error: "Terjadi kesalahan saat menghubungkan ke Asisten AI." },
       { status: 500 }
     );
   }
