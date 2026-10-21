@@ -1,0 +1,86 @@
+name: One-time fix chat controls
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix-chat-only:
+    if: ${{ !contains(github.event.head_commit.message, 'Fix chat controls only') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch chat component only
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('components/fullscreen-ai-assistant.tsx')
+          text = path.read_text(encoding='utf-8')
+
+          old_fn = '''  const deleteHistoryEntry = (id: string) => {
+    setHistory((previous) => previous.filter((entry) => entry.id !== id));
+  };
+'''
+          new_fn = '''  const deleteHistoryEntry = (id: string) => {
+    setHistory((previous) => previous.filter((entry) => entry.id !== id));
+  };
+
+  const clearAllConversations = () => {
+    if (busy) return;
+    if (!hasConversation && history.length === 0) return;
+    if (!window.confirm("Hapus semua percakapan dan seluruh riwayat Asisten AI di perangkat ini?")) return;
+    setMessages([welcome]);
+    setHistory([]);
+    setInput("");
+    setCopiedId(null);
+    setShowHistory(false);
+  };
+'''
+          if old_fn not in text:
+              raise SystemExit('Target function block not found')
+          text = text.replace(old_fn, new_fn, 1)
+
+          old_button = '''            <button
+              type="button"
+              onClick={newConversation}
+              disabled={busy}
+'''
+          new_button = '''            <button
+              type="button"
+              onClick={clearAllConversations}
+              disabled={busy || (!hasConversation && history.length === 0)}
+              aria-label="Hapus semua percakapan"
+              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-red-400/20 bg-red-500/5 px-3 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              <Trash2 size={17} />
+              <span className="hidden sm:inline">Hapus semua</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={newConversation}
+              disabled={busy}
+'''
+          if old_button not in text:
+              raise SystemExit('Target header button block not found')
+          text = text.replace(old_button, new_button, 1)
+
+          path.write_text(text, encoding='utf-8')
+
+      - name: Verify patch
+        run: |
+          grep -n "clearAllConversations\|Hapus semua percakapan\|Hapus semua" components/fullscreen-ai-assistant.tsx
+
+      - name: Commit chat-only fix and remove one-time workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/fullscreen-ai-assistant.tsx .github/workflows/one-time-fix-chat-controls.yml
+          git commit -m "Fix chat controls only"
+          git push
