@@ -204,3 +204,14 @@ button { cursor: pointer; }
   nav[aria-label="Navigasi Studio Musik"] > div > button { display: flex !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; flex: none !important; margin: 0 !important; padding: 8px 1px !important; white-space: normal !important; text-align: center !important; align-items: center !important; justify-content: center !important; overflow: hidden !important; box-sizing: border-box !important; color: #52525b !important; }
   nav[aria-label="Navigasi Studio Musik"] > div > button > span { display: block !important; width: 100% !important; min-width: 0 !important; max-width: 100% !important; overflow: hidden !important; overflow-wrap: anywhere !important; word-break: break-word !important; line-height: 1.1 !important; text-align: center !important; }
 }
+
+/* Upload/status readability: keep the existing upload flow, only strengthen the success/status text. */
+[data-premium-studio] main > div > div[class*="border-violet-400/15"] {
+  color: #27272a !important;
+  background: #f5f3ff !important;
+  border-color: #c4b5fd !important;
+  font-size: 15px !important;
+  font-weight: 650 !important;
+  line-height: 1.55 !important;
+  text-shadow: none !important;
+}
